@@ -1,0 +1,44 @@
+{
+  "name": "@helloerik-ai/connector-runtime",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Runtime contract and credential client for Erik connectors",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/helloerik-ai/connector-runtime.git"
+  },
+  "homepage": "https://github.com/helloerik-ai/connector-runtime#readme",
+  "bugs": {
+    "url": "https://github.com/helloerik-ai/connector-runtime/issues"
+  },
+  "type": "module",
+  "engines": {
+    "node": ">=24.15.0"
+  },
+  "packageManager": "pnpm@10.17.1",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "clean": "rm -rf dist coverage",
+    "check": "tsc --noEmit",
+    "test": "tsx --test test/*.test.ts",
+    "scan:secrets": "sh scripts/secret-scan.sh",
+    "build": "tsc -p tsconfig.build.json",
+    "verify": "pnpm clean && pnpm check && pnpm test && pnpm scan:secrets && pnpm build && git diff --exit-code -- dist && test -z \"$(git ls-files --others --exclude-standard -- dist)\""
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "tsx": "^4.20.0",
+    "typescript": "^5.9.0"
+  }
+}

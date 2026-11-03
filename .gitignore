@@ -80,7 +80,7 @@ out
 
 # Nuxt.js build / generate output
 .nuxt
-dist
+# Compiled output is committed so commit-pinned Git dependencies need no install scripts.
 .output
 
 # Gatsby files
