@@ -12,21 +12,34 @@ export interface ConnectorToolManifest {
         resourceType: string;
         approval?: 'always';
     };
-    /** A protected resource identified either by one top-level string argument or by a manifest constant. */
+    /** Version 1 uses stable ids directly. Version 2 may resolve a human reference or list synchronized resources locally. */
     resource: {
         idParameter: string;
     } | {
         fixedId: string;
+    } | {
+        referenceParameter: string;
+    } | {
+        list: {
+            parentParameter?: string;
+        };
     };
 }
+export interface ConnectorResourceManifest {
+    type: string;
+    label: string;
+    maxAgeSeconds: number;
+    supportsSubtree: boolean;
+}
 export interface ConnectorManifest {
-    version: 1;
+    version: 1 | 2;
     name: string;
     skill?: {
         name: string;
         description: string;
         instructions: string;
     };
+    resources?: ConnectorResourceManifest[];
     tools: ConnectorToolManifest[];
 }
 export declare class ConnectorManifestError extends Error {

@@ -1,6 +1,6 @@
 # `@helloerik-ai/connector-runtime`
 
-Public ESM TypeScript runtime contract for Erik connectors. It provides the authoritative connector manifest v1 parser, authenticated call-header parsing, connector registration, and the exclusive credential-lease client.
+Public ESM TypeScript runtime contract for Erik connectors. It provides the authoritative connector manifest v1 and v2 parser, authenticated call-header parsing, connector registration, and the exclusive credential-lease client.
 
 Requires Node.js 24.15 or newer.
 
@@ -27,6 +27,8 @@ export const manifest = parseConnectorManifest({
 ```
 
 `parseConnectorManifest` validates manifest limits, names, actions, JSON-schema safety, reserved parameters, and resource identifiers. It does not fetch manifests over the network.
+
+Manifest v2 adds synchronized resource-type declarations. Tools can use `resource.referenceParameter` for local human-reference resolution or `resource.list` for a local permission-filtered listing; both must name a declared resource type. Manifest v1 remains unchanged.
 
 ## Authenticated Calls
 

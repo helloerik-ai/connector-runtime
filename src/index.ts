@@ -4,6 +4,7 @@ export {
     validConnectorResourceId,
     type ConnectorActionLevel,
     type ConnectorManifest,
+    type ConnectorResourceManifest,
     type ConnectorToolManifest,
     type Level,
 } from './manifest.js';

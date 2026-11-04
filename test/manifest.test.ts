@@ -34,10 +34,36 @@ test('parses and returns a canonical ConnectorManifest v1', () => {
     assert.deepEqual(parseConnectorManifest(fixed), fixed);
 });
 
+test('parses resource-aware resolution and local listing tools in manifest v2', () => {
+    const resourceAware: ConnectorManifest = {
+        version: 2,
+        name: 'Google Drive',
+        resources: [{ type: 'drive.item', label: 'Drive item', maxAgeSeconds: 300, supportsSubtree: true }],
+        tools: [{
+            name: 'drive_read', label: 'Read file', description: 'Read one file.', auth: 'connection',
+            parameters: { type: 'object', properties: { file: { type: 'string' } }, required: ['file'] },
+            action: { name: 'drive.read', level: 'read', resourceType: 'drive.item' },
+            resource: { referenceParameter: 'file' },
+        }, {
+            name: 'drive_list', label: 'List files', description: 'List accessible files.', auth: 'connection',
+            parameters: { type: 'object', properties: { folder: { type: 'string' } } },
+            action: { name: 'drive.read', level: 'read', resourceType: 'drive.item' },
+            resource: { list: { parentParameter: 'folder' } },
+        }],
+    };
+    assert.deepEqual(parseConnectorManifest(structuredClone(resourceAware)), resourceAware);
+    assert.throws(() => parseConnectorManifest({ ...resourceAware, resources: undefined }), /resources/);
+    assert.throws(() => parseConnectorManifest({ ...resourceAware, resources: [{ ...resourceAware.resources![0], maxAgeSeconds: 0 }] }), /resource type/);
+    assert.throws(() => parseConnectorManifest({ ...resourceAware, tools: [{ ...resourceAware.tools[0],
+        resource: { referenceParameter: 'missing' } }] }), /must be a string/);
+    assert.throws(() => parseConnectorManifest({ ...resourceAware, tools: [{ ...resourceAware.tools[0],
+        action: { ...resourceAware.tools[0]!.action, resourceType: 'drive.undeclared' } }] }), /declared resource type/);
+});
+
 test('refuses malformed roots, tool identities, actions, auth and resource declarations', () => {
     const cases: unknown[] = [
         null,
-        { ...manifest(), version: 2 },
+        { ...manifest(), version: 2, resources: undefined },
         { ...manifest(), tools: new Array(51).fill(manifest().tools[0]) },
         { ...manifest(), skill: { name: 'Bad Name', description: 'x', instructions: 'x' } },
         { ...manifest(), tools: [{ ...manifest().tools[0], name: 'A' }] },
