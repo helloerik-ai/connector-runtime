@@ -38,7 +38,9 @@ import { parseConnectorCallHeaders } from '@helloerik-ai/connector-runtime';
 const call = parseConnectorCallHeaders(request.headers, config.connectorId);
 ```
 
-Missing, empty, repeated, combined multi-valued, or wrong-connector headers throw `ConnectorCallHeaderError` with HTTP status `401`.
+The result includes the authenticated connector, organization and connection ids, one-use call secret, stable invocation id, absolute deadline and an abort signal for provider work. Missing, empty, repeated, combined multi-valued, or wrong-connector authentication headers throw `ConnectorCallHeaderError` with HTTP status `401`. Invalid invocation metadata is `400`; an expired deadline is `408`.
+
+Pass `call.signal` to every provider request. Mutating provider calls should use `call.invocationId` as their idempotency key where the provider supports one. A connector must settle or classify dispatched work before `call.deadline`; it must not report definitive failure when the provider outcome is unknown.
 
 ## Registration
 
@@ -58,7 +60,7 @@ Registration is the existing authenticated liveness signal and has a ten-second 
 
 `CredentialClient` exchanges each one-time call secret for a 60-second exclusive lease. Reading, provider refresh work, replacement, and release all happen in that lease. A `409` during acquisition retries every 200 ms for up to ten seconds; `401` is reported as an expired or invalid call.
 
-The client deliberately does not renew leases. Current Erik connector calls have a 30-second overall timeout and therefore finish within the credential service's 60-second lease. End-to-end call deadlines and any future renewal policy belong to the connector runtime lifecycle, not this credential client.
+The client deliberately does not renew leases. Current Erik connector calls finish within the credential service's 60-second lease. Pass the parsed invocation deadline and signal to `withCredential`; lease acquisition then stops at that earlier deadline.
 
 ```ts
 import { CredentialClient } from '@helloerik-ai/connector-runtime';
@@ -77,8 +79,9 @@ const result = await credentials.withCredential(
     async (credential, replace) => {
         const refreshed = await refreshIfNeeded(credential);
         if (refreshed !== credential) await replace(refreshed);
-        return callProvider(refreshed);
+        return callProvider(refreshed, { signal: call.signal, invocationId: call.invocationId });
     },
+    { deadline: call.deadline, signal: call.signal },
 );
 ```
 

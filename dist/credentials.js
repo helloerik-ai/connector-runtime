@@ -59,12 +59,15 @@ export class CredentialClient {
             throw new CredentialClientError(code, message, undefined, { cause });
         }
     }
-    async acquire(orgId, connectionId, callSecret) {
+    async acquire(orgId, connectionId, callSecret, options = {}) {
         const url = this.resource(orgId, connectionId) + '/lease';
-        const deadline = this.now() + 10_000;
+        const deadline = Math.min(this.now() + 10_000, options.deadline?.getTime() ?? Number.POSITIVE_INFINITY);
+        if (deadline <= this.now())
+            throw new CredentialClientError('invalid-call', 'Connector call is invalid or expired', 401);
         while (true) {
             const response = await this.request(url, {
                 method: 'POST',
+                ...(options.signal && { signal: options.signal }),
                 headers: {
                     'X-Erik-Connector': this.connectorId,
                     'X-Erik-Call-Secret': callSecret,
@@ -80,7 +83,7 @@ export class CredentialClient {
                 }
                 throw new CredentialClientError('unavailable', 'Credential is unavailable', response.status);
             }
-            await this.sleep(200);
+            await this.sleep(Math.min(200, Math.max(0, deadline - this.now())));
         }
     }
     leaseHeaders(value) {
@@ -98,12 +101,14 @@ export class CredentialClient {
             // Releasing is best-effort and must not replace the operation's result or primary error.
         }
     }
-    async withCredential(orgId, connectionId, callSecret, use) {
-        const lease = await this.acquire(orgId, connectionId, callSecret);
+    async withCredential(orgId, connectionId, callSecret, use, options = {}) {
+        const lease = await this.acquire(orgId, connectionId, callSecret, options);
         const resource = this.resource(orgId, connectionId);
         const headers = this.leaseHeaders(lease);
         try {
-            const response = await this.request(resource, { headers }, 'unavailable', 'Credential is unavailable');
+            const response = await this.request(resource, {
+                headers, ...(options.signal && { signal: options.signal }),
+            }, 'unavailable', 'Credential is unavailable');
             const payload = await json(response);
             const stored = object(payload.credential);
             if (!response.ok || !stored) {
@@ -119,6 +124,7 @@ export class CredentialClient {
                 const updated = await this.request(resource, {
                     method: 'PUT',
                     headers: { ...headers, 'Content-Type': 'application/json' },
+                    ...(options.signal && { signal: options.signal }),
                     body: JSON.stringify(credential),
                 }, 'replacement-failed', this.replacementFailedMessage);
                 if (!updated.ok) {

@@ -25,4 +25,5 @@ export {
     type Credential,
     type CredentialClientErrorCode,
     type CredentialClientOptions,
+    type CredentialUseOptions,
 } from './credentials.js';

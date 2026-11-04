@@ -88,6 +88,26 @@ test('stops retrying a busy lease at the deadline with a typed unavailable error
     assert.equal(time, 10_000);
 });
 
+test('credential acquisition cannot retry past the invocation deadline', async () => {
+    let time = 0;
+    let attempts = 0;
+    const signal = new AbortController().signal;
+    const client = new CredentialClient('https://api.example', 'example', {
+        fetcher: async (_input, init) => {
+            attempts++;
+            assert.equal(init?.signal, signal);
+            return Response.json({ error: 'busy' }, { status: 409 });
+        },
+        now: () => time,
+        sleep: async milliseconds => { time += milliseconds; },
+    });
+    await assert.rejects(client.withCredential('org', 'connection', 'secret', async () => undefined,
+        { deadline: new Date(400), signal }),
+    (error: unknown) => error instanceof CredentialClientError && error.code === 'unavailable');
+    assert.equal(attempts, 3);
+    assert.equal(time, 400);
+});
+
 test('maps 401 acquisition to invalid-call without attempting credential access or release', async () => {
     let calls = 0;
     const client = new CredentialClient('https://api.example', 'example', {

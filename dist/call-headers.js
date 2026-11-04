@@ -1,12 +1,13 @@
 export class ConnectorCallHeaderError extends Error {
     code;
     header;
-    status = 401;
+    status;
     constructor(code, header) {
         super(code === 'wrong-connector' ? 'Invalid connector call identity' : 'Connector call authentication required');
         this.code = code;
         this.header = header;
         this.name = 'ConnectorCallHeaderError';
+        this.status = code === 'expired' ? 408 : code === 'invalid' ? 400 : 401;
     }
 }
 function header(source, name) {
@@ -29,15 +30,32 @@ function header(source, name) {
         throw new ConnectorCallHeaderError('empty', name);
     return values[0];
 }
-/** Parses and authenticates the four headers on an Erik-to-connector invocation. */
-export function parseConnectorCallHeaders(source, expectedConnectorId) {
+/** Parses one authenticated invocation and creates the signal every provider operation must observe. */
+export function parseConnectorCallHeaders(source, expectedConnectorId, options = {}) {
     const connectorId = header(source, 'X-Erik-Connector');
     if (connectorId !== expectedConnectorId)
         throw new ConnectorCallHeaderError('wrong-connector', 'X-Erik-Connector');
+    const invocationId = header(source, 'X-Erik-Invocation');
+    if (invocationId.length > 200 || !/^[\x21-\x7e]+$/.test(invocationId)) {
+        throw new ConnectorCallHeaderError('invalid', 'X-Erik-Invocation');
+    }
+    const deadlineValue = header(source, 'X-Erik-Deadline');
+    const deadline = new Date(deadlineValue);
+    if (!Number.isFinite(deadline.getTime()) || deadline.toISOString() !== deadlineValue) {
+        throw new ConnectorCallHeaderError('invalid', 'X-Erik-Deadline');
+    }
+    const remaining = deadline.getTime() - (options.now ?? Date.now)();
+    if (remaining <= 0)
+        throw new ConnectorCallHeaderError('expired', 'X-Erik-Deadline');
+    if (remaining > 60_000)
+        throw new ConnectorCallHeaderError('invalid', 'X-Erik-Deadline');
     return {
         connectorId,
         orgId: header(source, 'X-Erik-Org'),
         connectionId: header(source, 'X-Erik-Connection'),
         callSecret: header(source, 'X-Erik-Call-Secret'),
+        invocationId,
+        deadline,
+        signal: AbortSignal.timeout(remaining),
     };
 }

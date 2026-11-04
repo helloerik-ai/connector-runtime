@@ -34,6 +34,7 @@ const RESOURCE_TYPE = /^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$/;
 const SKILL_NAME = /^[a-z][a-z0-9-]{1,63}$/;
 const LEVELS = new Set<Level>(['read', 'prepare', 'change', 'irreversible']);
 const FORBIDDEN_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+const RESERVED_TOOL_NAMES = new Set(['current_time', 'list_people', 'give_access', 'load_skill', 'propose_skill']);
 const RESOURCE_SEGMENT = /^[A-Za-z0-9_:@-][A-Za-z0-9._:@-]*$/;
 
 const record = (value: unknown): Record<string, unknown> | undefined =>
@@ -113,8 +114,8 @@ export function parseConnectorManifest(value: unknown): ConnectorManifest {
             },
             resource: parsedResource,
         };
-        if (!TOOL_NAME.test(parsed.name) || names.has(parsed.name)) {
-            throw new ConnectorManifestError('Invalid or duplicate connector tool name');
+        if (!TOOL_NAME.test(parsed.name) || names.has(parsed.name) || RESERVED_TOOL_NAMES.has(parsed.name)) {
+            throw new ConnectorManifestError('Invalid, duplicate or reserved connector tool name');
         }
         if (parsed.auth !== 'connection') throw new ConnectorManifestError(`Invalid connector auth for ${parsed.name}`);
         if (!ACTION_NAME.test(parsed.action.name) || !LEVELS.has(parsed.action.level)
