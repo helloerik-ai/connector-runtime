@@ -93,9 +93,17 @@ export class CredentialClient {
             Accept: 'application/json',
         };
     }
-    async release(resource, headers) {
+    async release(resource, headers, options = {}) {
+        const remaining = Math.min(10_000, (options.deadline?.getTime() ?? Number.POSITIVE_INFINITY) - this.now());
+        if (remaining <= 0 || options.signal?.aborted)
+            return;
+        const timeout = AbortSignal.timeout(remaining);
+        const signal = options.signal ? AbortSignal.any([options.signal, timeout]) : timeout;
         try {
-            await this.fetcher(resource + '/lease', { method: 'DELETE', headers });
+            await Promise.race([
+                this.fetcher(resource + '/lease', { method: 'DELETE', headers, signal }),
+                new Promise(resolve => signal.addEventListener('abort', () => resolve(), { once: true })),
+            ]);
         }
         catch {
             // Releasing is best-effort and must not replace the operation's result or primary error.
@@ -134,7 +142,7 @@ export class CredentialClient {
             return await use(stored, replace);
         }
         finally {
-            await this.release(resource, headers);
+            await this.release(resource, headers, options);
         }
     }
     async store(orgId, connectionId, callSecret, credential) {

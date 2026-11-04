@@ -190,3 +190,24 @@ test('always attempts best-effort release and never masks callback or store fail
         (error: unknown) => error instanceof CredentialClientError && error.code === 'store-failed');
     assert.deepEqual(storeCalls, ['POST', 'PUT', 'DELETE']);
 });
+
+test('does not wait past the invocation signal for best-effort release', async () => {
+    const controller = new AbortController();
+    let releaseSignal: AbortSignal | null | undefined;
+    const client = new CredentialClient('https://api.example', 'example', {
+        fetcher: async (_input, init) => {
+            const method = init?.method ?? 'GET';
+            if (method === 'POST') return acquired();
+            if (method === 'GET') return Response.json({ credential: { token: 'value' } });
+            releaseSignal = init?.signal;
+            setImmediate(() => controller.abort());
+            return new Promise<Response>(() => undefined);
+        },
+    });
+    assert.equal(await client.withCredential('org', 'connection', 'secret', async () => 'result', {
+        deadline: new Date(Date.now() + 5_000), signal: controller.signal,
+    }), 'result');
+    assert(releaseSignal);
+    assert.equal(releaseSignal.aborted, true);
+    assert.equal(controller.signal.aborted, true);
+});
