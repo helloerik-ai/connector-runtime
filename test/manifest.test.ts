@@ -78,6 +78,14 @@ test('refuses malformed roots, tool identities, actions, auth and resource decla
     for (const value of cases) assert.throws(() => parseConnectorManifest(value), ConnectorManifestError);
 });
 
+test('refuses names reserved for Erik built-in tools', () => {
+    for (const name of ['current_time', 'list_people', 'give_access', 'load_skill', 'propose_skill']) {
+        const value = manifest();
+        value.tools[0]!.name = name;
+        assert.throws(() => parseConnectorManifest(value), ConnectorManifestError);
+    }
+});
+
 test('refuses non-canonical fixed ids and accepts the permission gateway resource-id boundary', () => {
     assert.equal(validConnectorResourceId('a'), true);
     assert.equal(validConnectorResourceId('A_1:@-z/path.with.dots'), true);

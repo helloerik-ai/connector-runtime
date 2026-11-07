@@ -14,6 +14,10 @@ export interface CredentialClientOptions {
         replacementFailed?: string;
     };
 }
+export interface CredentialUseOptions {
+    deadline?: Date;
+    signal?: AbortSignal;
+}
 export declare class CredentialClient {
     private readonly connectorId;
     private readonly apiUrl;
@@ -28,6 +32,6 @@ export declare class CredentialClient {
     private acquire;
     private leaseHeaders;
     private release;
-    withCredential<T>(orgId: string, connectionId: string, callSecret: string, use: (credential: Credential, replace: (credential: Credential) => Promise<void>) => Promise<T>): Promise<T>;
+    withCredential<T>(orgId: string, connectionId: string, callSecret: string, use: (credential: Credential, replace: (credential: Credential) => Promise<void>) => Promise<T>, options?: CredentialUseOptions): Promise<T>;
     store(orgId: string, connectionId: string, callSecret: string, credential: Credential): Promise<void>;
 }

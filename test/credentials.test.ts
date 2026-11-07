@@ -88,6 +88,26 @@ test('stops retrying a busy lease at the deadline with a typed unavailable error
     assert.equal(time, 10_000);
 });
 
+test('credential acquisition cannot retry past the invocation deadline', async () => {
+    let time = 0;
+    let attempts = 0;
+    const signal = new AbortController().signal;
+    const client = new CredentialClient('https://api.example', 'example', {
+        fetcher: async (_input, init) => {
+            attempts++;
+            assert.equal(init?.signal, signal);
+            return Response.json({ error: 'busy' }, { status: 409 });
+        },
+        now: () => time,
+        sleep: async milliseconds => { time += milliseconds; },
+    });
+    await assert.rejects(client.withCredential('org', 'connection', 'secret', async () => undefined,
+        { deadline: new Date(400), signal }),
+    (error: unknown) => error instanceof CredentialClientError && error.code === 'unavailable');
+    assert.equal(attempts, 3);
+    assert.equal(time, 400);
+});
+
 test('maps 401 acquisition to invalid-call without attempting credential access or release', async () => {
     let calls = 0;
     const client = new CredentialClient('https://api.example', 'example', {
@@ -169,4 +189,25 @@ test('always attempts best-effort release and never masks callback or store fail
     await assert.rejects(storeClient.store('org', 'connection', 'secret', { token: 'value' }),
         (error: unknown) => error instanceof CredentialClientError && error.code === 'store-failed');
     assert.deepEqual(storeCalls, ['POST', 'PUT', 'DELETE']);
+});
+
+test('does not wait past the invocation signal for best-effort release', async () => {
+    const controller = new AbortController();
+    let releaseSignal: AbortSignal | null | undefined;
+    const client = new CredentialClient('https://api.example', 'example', {
+        fetcher: async (_input, init) => {
+            const method = init?.method ?? 'GET';
+            if (method === 'POST') return acquired();
+            if (method === 'GET') return Response.json({ credential: { token: 'value' } });
+            releaseSignal = init?.signal;
+            setImmediate(() => controller.abort());
+            return new Promise<Response>(() => undefined);
+        },
+    });
+    assert.equal(await client.withCredential('org', 'connection', 'secret', async () => 'result', {
+        deadline: new Date(Date.now() + 5_000), signal: controller.signal,
+    }), 'result');
+    assert(releaseSignal);
+    assert.equal(releaseSignal.aborted, true);
+    assert.equal(controller.signal.aborted, true);
 });
