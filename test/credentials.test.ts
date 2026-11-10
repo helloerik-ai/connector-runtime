@@ -88,6 +88,94 @@ test('stops retrying a busy lease at the deadline with a typed unavailable error
     assert.equal(time, 10_000);
 });
 
+test('stores only after preparation while holding the acquired lease', async () => {
+    const order: string[] = [];
+    const calls: Call[] = [];
+    const fetcher: typeof fetch = async (input, init) => {
+        const method = init?.method ?? 'GET';
+        calls.push({ url: String(input), method, headers: new Headers(init?.headers),
+            ...(init?.body !== undefined && { body: String(init.body) }) });
+        order.push(method);
+        if (method === 'POST') return acquired();
+        if (method === 'PUT') return Response.json({ stored: true });
+        return released();
+    };
+    const client = new CredentialClient('https://api.example', 'example', { fetcher });
+
+    await client.storePrepared('org', 'connection', 'secret', { token: 'new' }, async () => {
+        order.push('prepare');
+    });
+
+    assert.deepEqual(order, ['POST', 'prepare', 'PUT', 'DELETE']);
+    assert.deepEqual(calls.map(call => call.method), ['POST', 'PUT', 'DELETE']);
+    assert.equal(calls[1]!.headers.get('x-erik-credential-lease'), 'holder:7');
+    assert.deepEqual(JSON.parse(calls[1]!.body!), { token: 'new' });
+});
+
+test('does not read or write a credential when preparation fails and releases the lease', async () => {
+    const calls: Call[] = [];
+    const client = new CredentialClient('https://api.example', 'example', {
+        fetcher: sequence([acquired(), released()], calls),
+    });
+
+    await assert.rejects(client.storePrepared('org', 'connection', 'secret', { token: 'new' }, async () => {
+        throw new Error('provider setup failed');
+    }), /provider setup failed/);
+    assert.deepEqual(calls.map(call => call.method), ['POST', 'DELETE']);
+});
+
+test('cancellation after acquisition prevents the write and still releases the lease', async () => {
+    const controller = new AbortController();
+    const calls: Call[] = [];
+    const client = new CredentialClient('https://api.example', 'example', {
+        fetcher: sequence([acquired(), released()], calls),
+    });
+
+    await assert.rejects(client.storePrepared('org', 'connection', 'secret', { token: 'new' }, async () => {
+        controller.abort(new Error('setup cancelled'));
+    }, { deadline: new Date(Date.now() + 5_000), signal: controller.signal }), /setup cancelled/);
+    assert.deepEqual(calls.map(call => call.method), ['POST', 'DELETE']);
+});
+
+test('prepared-store release settles by the deadline without replacing the primary error', async () => {
+    const controller = new AbortController();
+    let releaseSignal: AbortSignal | null | undefined;
+    const client = new CredentialClient('https://api.example', 'example', {
+        fetcher: async (_input, init) => {
+            const method = init?.method ?? 'GET';
+            if (method === 'POST') return acquired();
+            releaseSignal = init?.signal;
+            return new Promise<Response>(() => undefined);
+        },
+    });
+    const started = Date.now();
+
+    await assert.rejects(client.storePrepared('org', 'connection', 'secret', {}, async () => {
+        controller.abort(new Error('operation cancelled'));
+        throw new Error('provider setup failed');
+    }, { deadline: new Date(started + 50), signal: controller.signal }), /provider setup failed/);
+
+    assert(releaseSignal);
+    assert.equal(releaseSignal.aborted, true);
+    assert(Date.now() - started < 500);
+});
+
+test('classifies prepared-store acquisition and write failures like store', async () => {
+    const invalid = new CredentialClient('https://api.example', 'example', {
+        fetcher: async () => Response.json({ error: 'invalid' }, { status: 401 }),
+    });
+    await assert.rejects(invalid.storePrepared('org', 'connection', 'secret', {}, async () => undefined),
+        (error: unknown) => error instanceof CredentialClientError && error.code === 'invalid-call' && error.status === 401);
+
+    const calls: Call[] = [];
+    const failed = new CredentialClient('https://api.example', 'example', {
+        fetcher: sequence([acquired(), Response.json({ error: 'failed' }, { status: 503 }), released()], calls),
+    });
+    await assert.rejects(failed.storePrepared('org', 'connection', 'secret', {}, async () => undefined),
+        (error: unknown) => error instanceof CredentialClientError && error.code === 'store-failed' && error.status === 503);
+    assert.deepEqual(calls.map(call => call.method), ['POST', 'PUT', 'DELETE']);
+});
+
 test('credential acquisition cannot retry past the invocation deadline', async () => {
     let time = 0;
     let attempts = 0;

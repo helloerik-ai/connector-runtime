@@ -33,5 +33,6 @@ export declare class CredentialClient {
     private leaseHeaders;
     private release;
     withCredential<T>(orgId: string, connectionId: string, callSecret: string, use: (credential: Credential, replace: (credential: Credential) => Promise<void>) => Promise<T>, options?: CredentialUseOptions): Promise<T>;
+    storePrepared(orgId: string, connectionId: string, callSecret: string, credential: Credential, prepare: () => Promise<void>, options?: CredentialUseOptions): Promise<void>;
     store(orgId: string, connectionId: string, callSecret: string, credential: Credential): Promise<void>;
 }

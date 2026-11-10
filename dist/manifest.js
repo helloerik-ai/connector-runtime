@@ -88,7 +88,9 @@ export function parseConnectorManifest(value) {
         if (!tool || !action || !resource || !parameters || parameters.type !== 'object' || !record(parameters.properties)) {
             throw new ConnectorManifestError(`Invalid connector manifest tool ${index + 1}`);
         }
-        const kinds = ['fixedId', 'idParameter', 'referenceParameter', 'list'].filter(key => Object.hasOwn(resource, key));
+        const kinds = (version === 1
+            ? ['fixedId', 'idParameter', 'referenceParameter', 'list']
+            : ['fixedId', 'idParameter', 'referenceParameter', 'list', 'search']).filter(key => Object.hasOwn(resource, key));
         if (kinds.length !== 1)
             throw new ConnectorManifestError(`Invalid connector manifest resource ${index + 1}`);
         let parsedResource;
@@ -98,13 +100,23 @@ export function parseConnectorManifest(value) {
             parsedResource = { idParameter: text(resource.idParameter, 'resource id parameter', 64) };
         else if (kinds[0] === 'referenceParameter')
             parsedResource = { referenceParameter: text(resource.referenceParameter, 'resource reference parameter', 64) };
-        else {
+        else if (kinds[0] === 'list') {
             const list = record(resource.list);
             if (!list || Object.keys(list).some(key => key !== 'parentParameter')) {
                 throw new ConnectorManifestError(`Invalid connector manifest listing ${index + 1}`);
             }
             parsedResource = { list: {
                     ...(list.parentParameter !== undefined && { parentParameter: text(list.parentParameter, 'listing parent parameter', 64) }),
+                } };
+        }
+        else {
+            const search = record(resource.search);
+            if (Object.keys(resource).some(key => key !== 'search')
+                || !search || Object.keys(search).some(key => key !== 'queryParameter')) {
+                throw new ConnectorManifestError(`Invalid connector manifest search ${index + 1}`);
+            }
+            parsedResource = { search: {
+                    queryParameter: text(search.queryParameter, 'search query parameter', 64),
                 } };
         }
         const parsed = {
@@ -131,7 +143,7 @@ export function parseConnectorManifest(value) {
             || (action.approval !== undefined && action.approval !== 'always')) {
             throw new ConnectorManifestError(`Invalid connector action for ${parsed.name}`);
         }
-        if (('referenceParameter' in parsed.resource || 'list' in parsed.resource)
+        if (('referenceParameter' in parsed.resource || 'list' in parsed.resource || 'search' in parsed.resource)
             && (version !== 2 || !resourceTypes.has(parsed.action.resourceType))) {
             throw new ConnectorManifestError(`Resource-aware tool ${parsed.name} needs a declared resource type`);
         }
@@ -148,11 +160,18 @@ export function parseConnectorManifest(value) {
                 throw new ConnectorManifestError(`Resource parameter for ${parsed.name} must be a string`);
             }
         }
-        else if (parsed.resource.list.parentParameter !== undefined) {
+        else if ('list' in parsed.resource && parsed.resource.list.parentParameter !== undefined) {
             const properties = parameters.properties;
             const parentParameter = record(properties[parsed.resource.list.parentParameter]);
             if (!parentParameter || parentParameter.type !== 'string') {
                 throw new ConnectorManifestError(`Listing parent parameter for ${parsed.name} must be a string`);
+            }
+        }
+        else if ('search' in parsed.resource) {
+            const properties = parameters.properties;
+            const queryParameter = record(properties[parsed.resource.search.queryParameter]);
+            if (!queryParameter || queryParameter.type !== 'string') {
+                throw new ConnectorManifestError(`Search query parameter for ${parsed.name} must be a string`);
             }
         }
         if (Object.hasOwn(parameters.properties, 'connection')) {
@@ -162,5 +181,9 @@ export function parseConnectorManifest(value) {
         names.add(parsed.name);
         return parsed;
     });
-    return { version, name, ...(parsedSkill && { skill: parsedSkill }), ...(parsedResources && { resources: parsedResources }), tools };
+    const common = { name, ...(parsedSkill && { skill: parsedSkill }) };
+    if (version === 1) {
+        return { version, ...common, tools: tools };
+    }
+    return { version, ...common, resources: parsedResources, tools: tools };
 }

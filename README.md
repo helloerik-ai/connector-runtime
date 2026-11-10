@@ -26,9 +26,11 @@ export const manifest = parseConnectorManifest({
 }) satisfies ConnectorManifest;
 ```
 
-`parseConnectorManifest` validates manifest limits, names, actions, JSON-schema safety, reserved parameters, and resource identifiers. It does not fetch manifests over the network.
+`ConnectorManifest` is a discriminated union of `ConnectorManifestV1` and `ConnectorManifestV2`; the matching version-specific tool types are also exported. `parseConnectorManifest` preserves the version-specific return type when given a typed manifest while still accepting `unknown` input for boundary validation. It validates manifest limits, names, actions, JSON-schema safety, reserved parameters, and resource identifiers. It does not fetch manifests over the network.
 
-Manifest v2 adds synchronized resource-type declarations. Tools can use `resource.referenceParameter` for local human-reference resolution or `resource.list` for a local permission-filtered listing; both must name a declared resource type. Manifest v1 remains unchanged.
+Manifest v2 adds synchronized resource-type declarations. Tools can use `resource.referenceParameter` for local human-reference resolution, `resource.list` for a local permission-filtered listing, or `resource.search` for local catalogue search. All three modes must name a declared resource type. Manifest v1 remains unchanged.
+
+A manifest v2 search declaration has the exact shape `resource: { search: { queryParameter: string } }`; it is not part of the manifest v1 public type. `queryParameter` names a top-level string property in the tool's JSON schema. The declaration describes local catalogue discovery only: the runtime validates and returns it but does not search a provider or define any transport behavior.
 
 ## Authenticated Calls
 
@@ -87,7 +89,9 @@ const result = await credentials.withCredential(
 );
 ```
 
-`store` uses the same lease protocol for OAuth completion. Lease release is best-effort in a `finally` block and never replaces the provider or storage error. `CredentialClientError.code` and `status` allow server code to map failures without comparing user-facing messages.
+`store` uses the same lease protocol for OAuth completion. When provider setup must happen before a credential becomes usable, use `storePrepared(orgId, connectionId, callSecret, credential, prepare, options?)`. It acquires and consumes the tuple-bound setup capability first, holds the exclusive lease while `prepare` runs, and stores the new credential only after `prepare` succeeds. The callback cannot access an existing credential. Pass the invocation deadline and signal in `options`; preparation should use that signal for provider work.
+
+Lease release is best-effort in a `finally` block and never replaces the provider, preparation, or storage error. `CredentialClientError.code` and `status` allow server code to map failures without comparing user-facing messages.
 
 ## Development
 

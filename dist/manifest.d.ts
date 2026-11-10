@@ -1,6 +1,6 @@
 export type Level = 'read' | 'prepare' | 'change' | 'irreversible';
 export type ConnectorActionLevel = Level;
-export interface ConnectorToolManifest {
+interface ConnectorToolManifestBase {
     name: string;
     label: string;
     description: string;
@@ -12,39 +12,59 @@ export interface ConnectorToolManifest {
         resourceType: string;
         approval?: 'always';
     };
-    /** Version 1 uses stable ids directly. Version 2 may resolve a human reference or list synchronized resources locally. */
+}
+export interface ConnectorToolManifestV1 extends ConnectorToolManifestBase {
     resource: {
         idParameter: string;
     } | {
         fixedId: string;
-    } | {
+    };
+}
+export interface ConnectorToolManifestV2 extends ConnectorToolManifestBase {
+    resource: ConnectorToolManifestV1['resource'] | {
         referenceParameter: string;
     } | {
         list: {
             parentParameter?: string;
         };
+    } | {
+        search: {
+            queryParameter: string;
+        };
     };
 }
+export type ConnectorToolManifest = ConnectorToolManifestV1 | ConnectorToolManifestV2;
 export interface ConnectorResourceManifest {
     type: string;
     label: string;
     maxAgeSeconds: number;
     supportsSubtree: boolean;
 }
-export interface ConnectorManifest {
-    version: 1 | 2;
+interface ConnectorManifestBase {
     name: string;
     skill?: {
         name: string;
         description: string;
         instructions: string;
     };
-    resources?: ConnectorResourceManifest[];
-    tools: ConnectorToolManifest[];
 }
+export interface ConnectorManifestV1 extends ConnectorManifestBase {
+    version: 1;
+    resources?: never;
+    tools: ConnectorToolManifestV1[];
+}
+export interface ConnectorManifestV2 extends ConnectorManifestBase {
+    version: 2;
+    resources: ConnectorResourceManifest[];
+    tools: ConnectorToolManifestV2[];
+}
+export type ConnectorManifest = ConnectorManifestV1 | ConnectorManifestV2;
 export declare class ConnectorManifestError extends Error {
     name: string;
 }
 /** Matches the canonical resource-id rule enforced by Erik's permission gateway. */
 export declare function validConnectorResourceId(id: unknown): id is string;
+export declare function parseConnectorManifest(value: ConnectorManifestV1): ConnectorManifestV1;
+export declare function parseConnectorManifest(value: ConnectorManifestV2): ConnectorManifestV2;
 export declare function parseConnectorManifest(value: unknown): ConnectorManifest;
+export {};

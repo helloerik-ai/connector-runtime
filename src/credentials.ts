@@ -192,19 +192,34 @@ export class CredentialClient {
         }
     }
 
-    async store(orgId: string, connectionId: string, callSecret: string, credential: Credential): Promise<void> {
-        const lease = await this.acquire(orgId, connectionId, callSecret);
+    async storePrepared(
+        orgId: string,
+        connectionId: string,
+        callSecret: string,
+        credential: Credential,
+        prepare: () => Promise<void>,
+        options: CredentialUseOptions = {},
+    ): Promise<void> {
+        const lease = await this.acquire(orgId, connectionId, callSecret, options);
         const resource = this.resource(orgId, connectionId);
         const headers = { ...this.leaseHeaders(lease), 'Content-Type': 'application/json' };
         try {
+            options.signal?.throwIfAborted();
+            await prepare();
+            options.signal?.throwIfAborted();
             const response = await this.request(resource, {
                 method: 'PUT', headers, body: JSON.stringify(credential),
+                ...(options.signal && { signal: options.signal }),
             }, 'store-failed', 'Credential could not be stored');
             if (!response.ok) {
                 throw new CredentialClientError('store-failed', 'Credential could not be stored', response.status);
             }
         } finally {
-            await this.release(resource, headers);
+            await this.release(resource, headers, { ...(options.deadline && { deadline: options.deadline }) });
         }
+    }
+
+    async store(orgId: string, connectionId: string, callSecret: string, credential: Credential): Promise<void> {
+        await this.storePrepared(orgId, connectionId, callSecret, credential, async () => undefined);
     }
 }

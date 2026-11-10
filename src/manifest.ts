@@ -1,7 +1,7 @@
 export type Level = 'read' | 'prepare' | 'change' | 'irreversible';
 export type ConnectorActionLevel = Level;
 
-export interface ConnectorToolManifest {
+interface ConnectorToolManifestBase {
     name: string;
     label: string;
     description: string;
@@ -13,10 +13,18 @@ export interface ConnectorToolManifest {
         resourceType: string;
         approval?: 'always';
     };
-    /** Version 1 uses stable ids directly. Version 2 may resolve a human reference or list synchronized resources locally. */
-    resource: { idParameter: string } | { fixedId: string } | { referenceParameter: string }
-        | { list: { parentParameter?: string } };
 }
+
+export interface ConnectorToolManifestV1 extends ConnectorToolManifestBase {
+    resource: { idParameter: string } | { fixedId: string };
+}
+
+export interface ConnectorToolManifestV2 extends ConnectorToolManifestBase {
+    resource: ConnectorToolManifestV1['resource'] | { referenceParameter: string }
+        | { list: { parentParameter?: string } } | { search: { queryParameter: string } };
+}
+
+export type ConnectorToolManifest = ConnectorToolManifestV1 | ConnectorToolManifestV2;
 
 export interface ConnectorResourceManifest {
     type: string;
@@ -25,13 +33,24 @@ export interface ConnectorResourceManifest {
     supportsSubtree: boolean;
 }
 
-export interface ConnectorManifest {
-    version: 1 | 2;
+interface ConnectorManifestBase {
     name: string;
     skill?: { name: string; description: string; instructions: string };
-    resources?: ConnectorResourceManifest[];
-    tools: ConnectorToolManifest[];
 }
+
+export interface ConnectorManifestV1 extends ConnectorManifestBase {
+    version: 1;
+    resources?: never;
+    tools: ConnectorToolManifestV1[];
+}
+
+export interface ConnectorManifestV2 extends ConnectorManifestBase {
+    version: 2;
+    resources: ConnectorResourceManifest[];
+    tools: ConnectorToolManifestV2[];
+}
+
+export type ConnectorManifest = ConnectorManifestV1 | ConnectorManifestV2;
 
 export class ConnectorManifestError extends Error {
     override name = 'ConnectorManifestError';
@@ -75,6 +94,9 @@ export function validConnectorResourceId(id: unknown): id is string {
         && id.split('/').every(segment => RESOURCE_SEGMENT.test(segment) && segment !== '..');
 }
 
+export function parseConnectorManifest(value: ConnectorManifestV1): ConnectorManifestV1;
+export function parseConnectorManifest(value: ConnectorManifestV2): ConnectorManifestV2;
+export function parseConnectorManifest(value: unknown): ConnectorManifest;
 export function parseConnectorManifest(value: unknown): ConnectorManifest {
     const root = record(value);
     if (!root || (root.version !== 1 && root.version !== 2) || !Array.isArray(root.tools) || root.tools.length > 50) {
@@ -127,19 +149,31 @@ export function parseConnectorManifest(value: unknown): ConnectorManifest {
         if (!tool || !action || !resource || !parameters || parameters.type !== 'object' || !record(parameters.properties)) {
             throw new ConnectorManifestError(`Invalid connector manifest tool ${index + 1}`);
         }
-        const kinds = ['fixedId', 'idParameter', 'referenceParameter', 'list'].filter(key => Object.hasOwn(resource, key));
+        const kinds = (version === 1
+            ? ['fixedId', 'idParameter', 'referenceParameter', 'list']
+            : ['fixedId', 'idParameter', 'referenceParameter', 'list', 'search']
+        ).filter(key => Object.hasOwn(resource, key));
         if (kinds.length !== 1) throw new ConnectorManifestError(`Invalid connector manifest resource ${index + 1}`);
         let parsedResource: ConnectorToolManifest['resource'];
         if (kinds[0] === 'fixedId') parsedResource = { fixedId: text(resource.fixedId, 'fixed resource id', 300) };
         else if (kinds[0] === 'idParameter') parsedResource = { idParameter: text(resource.idParameter, 'resource id parameter', 64) };
         else if (kinds[0] === 'referenceParameter') parsedResource = { referenceParameter: text(resource.referenceParameter, 'resource reference parameter', 64) };
-        else {
+        else if (kinds[0] === 'list') {
             const list = record(resource.list);
             if (!list || Object.keys(list).some(key => key !== 'parentParameter')) {
                 throw new ConnectorManifestError(`Invalid connector manifest listing ${index + 1}`);
             }
             parsedResource = { list: {
                 ...(list.parentParameter !== undefined && { parentParameter: text(list.parentParameter, 'listing parent parameter', 64) }),
+            } };
+        } else {
+            const search = record(resource.search);
+            if (Object.keys(resource).some(key => key !== 'search')
+                || !search || Object.keys(search).some(key => key !== 'queryParameter')) {
+                throw new ConnectorManifestError(`Invalid connector manifest search ${index + 1}`);
+            }
+            parsedResource = { search: {
+                queryParameter: text(search.queryParameter, 'search query parameter', 64),
             } };
         }
         const parsed: ConnectorToolManifest = {
@@ -165,7 +199,7 @@ export function parseConnectorManifest(value: unknown): ConnectorManifest {
             || (action.approval !== undefined && action.approval !== 'always')) {
             throw new ConnectorManifestError(`Invalid connector action for ${parsed.name}`);
         }
-        if (('referenceParameter' in parsed.resource || 'list' in parsed.resource)
+        if (('referenceParameter' in parsed.resource || 'list' in parsed.resource || 'search' in parsed.resource)
             && (version !== 2 || !resourceTypes.has(parsed.action.resourceType))) {
             throw new ConnectorManifestError(`Resource-aware tool ${parsed.name} needs a declared resource type`);
         }
@@ -180,11 +214,17 @@ export function parseConnectorManifest(value: unknown): ConnectorManifest {
             if (!resourceParameter || resourceParameter.type !== 'string') {
                 throw new ConnectorManifestError(`Resource parameter for ${parsed.name} must be a string`);
             }
-        } else if (parsed.resource.list.parentParameter !== undefined) {
+        } else if ('list' in parsed.resource && parsed.resource.list.parentParameter !== undefined) {
             const properties = parameters.properties as Record<string, unknown>;
             const parentParameter = record(properties[parsed.resource.list.parentParameter]);
             if (!parentParameter || parentParameter.type !== 'string') {
                 throw new ConnectorManifestError(`Listing parent parameter for ${parsed.name} must be a string`);
+            }
+        } else if ('search' in parsed.resource) {
+            const properties = parameters.properties as Record<string, unknown>;
+            const queryParameter = record(properties[parsed.resource.search.queryParameter]);
+            if (!queryParameter || queryParameter.type !== 'string') {
+                throw new ConnectorManifestError(`Search query parameter for ${parsed.name} must be a string`);
             }
         }
         if (Object.hasOwn(parameters.properties as Record<string, unknown>, 'connection')) {
@@ -194,5 +234,9 @@ export function parseConnectorManifest(value: unknown): ConnectorManifest {
         names.add(parsed.name);
         return parsed;
     });
-    return { version, name, ...(parsedSkill && { skill: parsedSkill }), ...(parsedResources && { resources: parsedResources }), tools };
+    const common = { name, ...(parsedSkill && { skill: parsedSkill }) };
+    if (version === 1) {
+        return { version, ...common, tools: tools as ConnectorToolManifestV1[] };
+    }
+    return { version, ...common, resources: parsedResources!, tools: tools as ConnectorToolManifestV2[] };
 }

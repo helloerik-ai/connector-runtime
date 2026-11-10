@@ -4,10 +4,11 @@ import {
     ConnectorManifestError,
     parseConnectorManifest,
     validConnectorResourceId,
-    type ConnectorManifest,
+    type ConnectorManifestV1,
+    type ConnectorManifestV2,
 } from '../src/index.js';
 
-const manifest = (): ConnectorManifest => ({
+const manifest = (): ConnectorManifestV1 => ({
     version: 1,
     name: 'Example connector',
     skill: { name: 'example-skill', description: 'Use the example system', instructions: 'Prefer exact identifiers.' },
@@ -34,8 +35,31 @@ test('parses and returns a canonical ConnectorManifest v1', () => {
     assert.deepEqual(parseConnectorManifest(fixed), fixed);
 });
 
-test('parses resource-aware resolution and local listing tools in manifest v2', () => {
-    const resourceAware: ConnectorManifest = {
+test('accepts and canonicalizes a v1 resource with an unrelated search property', () => {
+    for (const validResource of [{ idParameter: 'exampleId' }, { fixedId: 'example' }]) {
+        const compatibilityInput = manifest() as unknown as Record<string, unknown>;
+        const tools = compatibilityInput.tools as Array<Record<string, unknown>>;
+        tools[0]!.resource = { ...validResource, search: { unrelated: true } };
+        const expected = manifest();
+        expected.tools[0]!.resource = validResource;
+
+        assert.deepEqual(parseConnectorManifest(compatibilityInput), expected);
+    }
+});
+
+test('refuses mixed known v1 and v2 resource declarations in manifest v1', () => {
+    for (const extra of [{ referenceParameter: 'exampleId' }, { list: {} }]) {
+        for (const validResource of [{ idParameter: 'exampleId' }, { fixedId: 'example' }]) {
+            const input = manifest() as unknown as Record<string, unknown>;
+            const tools = input.tools as Array<Record<string, unknown>>;
+            tools[0]!.resource = { ...validResource, ...extra };
+            assert.throws(() => parseConnectorManifest(input), /manifest resource/);
+        }
+    }
+});
+
+test('parses resource-aware resolution, local listing and local catalogue search tools in manifest v2', () => {
+    const resourceAware: ConnectorManifestV2 = {
         version: 2,
         name: 'Google Drive',
         resources: [{ type: 'drive.item', label: 'Drive item', maxAgeSeconds: 300, supportsSubtree: true }],
@@ -49,6 +73,11 @@ test('parses resource-aware resolution and local listing tools in manifest v2', 
             parameters: { type: 'object', properties: { folder: { type: 'string' } } },
             action: { name: 'drive.read', level: 'read', resourceType: 'drive.item' },
             resource: { list: { parentParameter: 'folder' } },
+        }, {
+            name: 'drive_search', label: 'Search files', description: 'Search accessible files.', auth: 'connection',
+            parameters: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] },
+            action: { name: 'drive.read', level: 'read', resourceType: 'drive.item' },
+            resource: { search: { queryParameter: 'query' } },
         }],
     };
     assert.deepEqual(parseConnectorManifest(structuredClone(resourceAware)), resourceAware);
@@ -58,6 +87,34 @@ test('parses resource-aware resolution and local listing tools in manifest v2', 
         resource: { referenceParameter: 'missing' } }] }), /must be a string/);
     assert.throws(() => parseConnectorManifest({ ...resourceAware, tools: [{ ...resourceAware.tools[0],
         action: { ...resourceAware.tools[0]!.action, resourceType: 'drive.undeclared' } }] }), /declared resource type/);
+});
+
+test('refuses invalid local catalogue search declarations', () => {
+    const searchTool = {
+        ...manifest().tools[0],
+        name: 'example_search',
+        parameters: { type: 'object', properties: { query: { type: 'string' }, limit: { type: 'number' } } },
+        resource: { search: { queryParameter: 'query' } },
+    };
+    const v2 = {
+        version: 2,
+        name: 'Example connector',
+        resources: [{ type: 'example.item', label: 'Example', maxAgeSeconds: 300, supportsSubtree: false }],
+        tools: [searchTool],
+    };
+
+    assert.throws(() => parseConnectorManifest({ ...v2, version: 1, resources: undefined }), /manifest resource/);
+    assert.throws(() => parseConnectorManifest({ ...v2, resources: [] }), /declared resource type/);
+    assert.throws(() => parseConnectorManifest({ ...v2, tools: [{ ...searchTool,
+        resource: { search: { queryParameter: 'missing' } } }] }), /must be a string/);
+    assert.throws(() => parseConnectorManifest({ ...v2, tools: [{ ...searchTool,
+        resource: { search: { queryParameter: 'limit' } } }] }), /must be a string/);
+    assert.throws(() => parseConnectorManifest({ ...v2, tools: [{ ...searchTool,
+        resource: { search: { queryParameter: 'query', extra: true } } }] }), /manifest search/);
+    assert.throws(() => parseConnectorManifest({ ...v2, tools: [{ ...searchTool,
+        resource: { search: { queryParameter: 'query' }, extra: true } }] }), /manifest search/);
+    assert.throws(() => parseConnectorManifest({ ...v2, tools: [{ ...searchTool,
+        resource: { search: 'query' } }] }), /manifest search/);
 });
 
 test('refuses malformed roots, tool identities, actions, auth and resource declarations', () => {
