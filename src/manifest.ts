@@ -40,10 +40,20 @@ export type ConnectorBrowserRouteManifest =
     | { path: string; method: 'POST'; trust: 'setup' }
     | { path: string; method: ConnectorBrowserMethod; trust: Exclude<ConnectorBrowserTrust, 'setup'> };
 
-export interface ConnectorBrowserManifest {
+interface ConnectorBrowserManifestBase {
     routes: ConnectorBrowserRouteManifest[];
     redirectOrigins: string[];
 }
+
+export interface ConnectorBrowserManifestV1 extends ConnectorBrowserManifestBase {
+    version?: 1;
+}
+
+export interface ConnectorBrowserManifestV2 extends ConnectorBrowserManifestBase {
+    version: 2;
+}
+
+export type ConnectorBrowserManifest = ConnectorBrowserManifestV1 | ConnectorBrowserManifestV2;
 
 interface ConnectorManifestBase {
     name: string;
@@ -125,7 +135,8 @@ function validRedirectOrigin(value: unknown): value is string {
 function parseBrowser(value: unknown): ConnectorBrowserManifest | undefined {
     if (value === undefined) return undefined;
     const browser = record(value);
-    if (!browser || Object.keys(browser).some(key => !['routes', 'redirectOrigins'].includes(key))
+    if (!browser || Object.keys(browser).some(key => !['version', 'routes', 'redirectOrigins'].includes(key))
+        || (browser.version !== undefined && browser.version !== 1 && browser.version !== 2)
         || !Array.isArray(browser.routes) || browser.routes.length > 30
         || !Array.isArray(browser.redirectOrigins) || browser.redirectOrigins.length > 30) {
         throw new ConnectorManifestError('Invalid connector manifest browser declaration');
@@ -156,7 +167,11 @@ function parseBrowser(value: unknown): ConnectorBrowserManifest | undefined {
         originKeys.add(origin);
         return origin;
     });
-    return { routes, redirectOrigins };
+    return {
+        ...(browser.version !== undefined && { version: browser.version as 1 | 2 }),
+        routes,
+        redirectOrigins,
+    } as ConnectorBrowserManifest;
 }
 
 export function parseConnectorManifest(value: ConnectorManifestV1): ConnectorManifestV1;

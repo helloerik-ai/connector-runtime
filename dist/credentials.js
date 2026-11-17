@@ -31,6 +31,20 @@ function parseLease(value, status) {
     }
     return found;
 }
+function parseSetupClaim(value, status) {
+    const found = object(value);
+    const allowed = new Set(['orgId', 'connectionId', 'setupAttempt', 'expiresAt']);
+    if (!found || Object.keys(found).some(key => !allowed.has(key)) || Object.keys(found).length !== allowed.size
+        || typeof found.orgId !== 'string' || !found.orgId || typeof found.connectionId !== 'string' || !found.connectionId
+        || typeof found.setupAttempt !== 'string' || !found.setupAttempt || typeof found.expiresAt !== 'string') {
+        throw new CredentialClientError('malformed-response', 'Erik credential service returned an invalid setup claim', status);
+    }
+    const expiresAt = new Date(found.expiresAt);
+    if (!Number.isFinite(expiresAt.getTime()) || expiresAt.toISOString() !== found.expiresAt) {
+        throw new CredentialClientError('malformed-response', 'Erik credential service returned an invalid setup claim', status);
+    }
+    return found;
+}
 export class CredentialClient {
     connectorId;
     apiUrl;
@@ -58,6 +72,40 @@ export class CredentialClient {
         catch (cause) {
             throw new CredentialClientError(code, message, undefined, { cause });
         }
+    }
+    async claimSetup(orgId, connectionId, callSecret, setupAttempt, options = {}) {
+        const remaining = Math.min(10_000, (options.deadline?.getTime() ?? Number.POSITIVE_INFINITY) - this.now());
+        if (!Number.isFinite(remaining) || remaining <= 0) {
+            throw new CredentialClientError('invalid-call', 'Connector call is invalid or expired', 401);
+        }
+        const timeout = AbortSignal.timeout(remaining);
+        const signal = options.signal ? AbortSignal.any([options.signal, timeout]) : timeout;
+        const response = await this.request(this.resource(orgId, connectionId) + '/claim', {
+            method: 'POST',
+            headers: {
+                'X-Erik-Connector': this.connectorId,
+                'X-Erik-Call-Secret': callSecret,
+                'Content-Type': 'application/json',
+                Accept: 'application/json',
+            },
+            signal,
+            body: JSON.stringify({ setupAttempt }),
+        }, 'unavailable', 'Setup claim is unavailable');
+        if (response.status === 401) {
+            throw new CredentialClientError('invalid-call', 'Connector call is invalid or expired', 401);
+        }
+        if (!response.ok) {
+            throw new CredentialClientError('unavailable', 'Setup claim is unavailable', response.status);
+        }
+        const payload = await json(response);
+        if (Object.keys(payload).length !== 1 || !Object.hasOwn(payload, 'setup')) {
+            throw new CredentialClientError('malformed-response', 'Erik credential service returned an invalid setup claim', response.status);
+        }
+        const claim = parseSetupClaim(payload.setup, response.status);
+        if (claim.orgId !== orgId || claim.connectionId !== connectionId || claim.setupAttempt !== setupAttempt) {
+            throw new CredentialClientError('malformed-response', 'Erik credential service returned an invalid setup claim', response.status);
+        }
+        return claim;
     }
     async acquire(orgId, connectionId, callSecret, options = {}) {
         const url = this.resource(orgId, connectionId) + '/lease';

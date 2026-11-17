@@ -2,6 +2,8 @@ import {
     parseConnectorManifest,
     type ConnectorManifestV1,
     type ConnectorManifestV2,
+    type ConnectorBrowserManifestV1,
+    type ConnectorBrowserManifestV2,
     type ConnectorToolManifestV1,
 } from '../src/index.js';
 
@@ -54,3 +56,11 @@ const directV2 = parseConnectorManifest({
     tools: [],
 });
 directV2.resources satisfies typeof directV2.resources;
+
+const browserV1: ConnectorBrowserManifestV1 = { routes: [], redirectOrigins: [] };
+const explicitBrowserV1: ConnectorBrowserManifestV1 = { version: 1, routes: [], redirectOrigins: [] };
+const browserV2: ConnectorBrowserManifestV2 = { version: 2, routes: [], redirectOrigins: [] };
+void [browserV1, explicitBrowserV1, browserV2];
+// @ts-expect-error Browser contract v2 requires an explicit version.
+const missingBrowserV2: ConnectorBrowserManifestV2 = { routes: [], redirectOrigins: [] };
+void missingBrowserV2;

@@ -4,6 +4,8 @@ export {
     validConnectorResourceId,
     type ConnectorActionLevel,
     type ConnectorBrowserManifest,
+    type ConnectorBrowserManifestV1,
+    type ConnectorBrowserManifestV2,
     type ConnectorBrowserMethod,
     type ConnectorBrowserRouteManifest,
     type ConnectorBrowserTrust,
@@ -47,4 +49,5 @@ export {
     type CredentialClientErrorCode,
     type CredentialClientOptions,
     type CredentialUseOptions,
+    type SetupClaimContext,
 } from './credentials.js';

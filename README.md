@@ -1,6 +1,6 @@
 # `@helloerik-ai/connector-runtime`
 
-Public ESM TypeScript runtime contract for Erik connectors. It provides the authoritative connector manifest v1 and v2 parser, authenticated call-header parsing, signed browser-proxy requests, connector registration, and the exclusive credential-lease client.
+Public ESM TypeScript runtime contract for Erik connectors. It provides the authoritative connector manifest v1 and v2 parser, authenticated call-header parsing, connector registration, setup claims, and the exclusive credential-lease client. Legacy browser-contract v1 signing remains available during migration.
 
 Requires Node.js 24.15 or newer.
 
@@ -36,6 +36,7 @@ Both manifest versions may declare browser routes:
 
 ```ts
 browser: {
+    version: 2,
     routes: [
         { path: '/setup', method: 'POST', trust: 'setup' },
         { path: '/oauth/callback', method: 'GET', trust: 'provider' },
@@ -43,6 +44,8 @@ browser: {
     redirectOrigins: ['https://accounts.provider.example'],
 }
 ```
+
+`browser.version` selects the rolling-compatible browser transport contract. Missing `version` or `version: 1` is the legacy contract: Erik maps each declared public path to the connector's signed `/erik/browser/...` transport path. `version: 2` makes every declared path the connector's exact ordinary path; Erik forwards it unchanged. There is no separate target path.
 
 Each declaration allows one exact `GET` or `POST` path and one trust class. A manifest may have at most one `setup` route and it must use `POST`; malformed setup declarations invalidate the manifest. `setup` requires Erik's authenticated setup handoff, `browser` is a connector-state-bound browser continuation, and `provider` is a provider callback whose connector state remains authoritative. Paths use canonical slash-separated alphanumeric, `_` and `-` segments; wildcards, dot segments, encoded separators and other ambiguous forms are refused. Redirects may target only listed exact HTTPS origins. Exact loopback HTTP origins on `localhost`, `127.0.0.1` or `[::1]` are allowed for local development.
 
@@ -73,18 +76,18 @@ const registration = await registerConnector({
 });
 ```
 
-Registration is the existing authenticated liveness signal and has a ten-second request timeout. `apiUrl` must be an exact HTTPS origin; exact loopback HTTP origins are allowed for local development. Redirects are never followed. `expectedDomain` is the canonical host, including any port, from the connector's configured public URL. Registration refuses a response whose domain differs from it. The validated result contains `id`, `domain`, and the per-connector `browserProxySecret`. Keep that secret in memory and never send it to a browser or log it.
+Registration is the existing authenticated liveness signal and has a ten-second request timeout. `apiUrl` must be an exact HTTPS origin; exact loopback HTTP origins are allowed for local development. Redirects are never followed. `expectedDomain` is the canonical host, including any port, from the connector's configured public URL. Registration refuses a response whose domain differs from it. The validated result contains `id` and `domain`. It optionally contains `browserProxySecret` for legacy browser-contract v1 connectors; v2 connectors do not receive or need it. Never send that legacy secret to a browser or log it.
 
-## Browser Proxy Authentication
+## Legacy Browser Proxy Authentication
 
-Erik signs each request it sends to a connector's internal `/erik/browser/...` namespace. Connectors verify it before invoking route code:
+Browser contract v1 is retained only for rolling compatibility. Erik signs each v1 request it sends to a connector's internal `/erik/browser/...` namespace. Connectors verify the transport before invoking route code:
 
 ```ts
 import { verifyConnectorBrowserRequest } from '@helloerik-ai/connector-runtime';
 
 const browserRequest = verifyConnectorBrowserRequest({
     headers: request.headers,
-    secret: registration.browserProxySecret,
+    secret: registration.browserProxySecret!,
     connectorId: config.connectorId,
     method: request.method,
     path: url.pathname,
@@ -107,11 +110,13 @@ The headers are `X-Erik-Browser-Connector`, `X-Erik-Browser-Request-Id`, `X-Erik
 <canonical deadline>
 ```
 
-`signConnectorBrowserRequest` generates a unique request id and a 30-second deadline unless supplied by Erik. Verification uses strict singleton header parsing and constant-time signature comparison; it binds changes to the connector, method, path, raw query, body, request id, or deadline. The signature proves authenticity and bounded freshness, but does not consume request ids or provide standalone replay prevention. Connector state and one-use setup or credential capabilities remain responsible for replay resistance.
+`signConnectorBrowserRequest` and `verifyConnectorBrowserRequest` are deprecated legacy-v1 APIs. Signing generates a unique request id and a 30-second deadline unless supplied by Erik. Verification uses strict singleton header parsing and constant-time signature comparison; it binds changes to the connector, method, path, raw query, body, request id, or deadline. This transport signature is not provider-operation authority. Connector state and one-use setup or credential capabilities remain responsible for authorization and replay resistance. Browser contract v2 uses ordinary connector paths and does not use these APIs.
 
 ## Credentials
 
 `CredentialClient` exchanges each one-time call secret for a 60-second exclusive lease. Reading, provider refresh work, replacement, and release all happen in that lease. A `409` during acquisition retries every 200 ms for up to ten seconds; `401` is reported as an expired or invalid call.
+
+For a browser-contract v2 setup route, call `claimSetup(orgId, connectionId, callSecret, setupAttempt, options?)` before creating connector state, setting cookies, redirecting, or starting provider work. It posts the existing call secret and setup attempt to the credential resource's `/claim` operation; it does not introduce another bearer token. A successful claim returns the strictly validated authoritative `{ orgId, connectionId, setupAttempt, expiresAt }` context. A `401` is `invalid-call`. Pass the setup request's deadline and signal so a claim cannot outlive it. The API owns the atomic issued-versus-claimed state transition; the runtime only exposes the validated operation.
 
 The client deliberately does not renew leases. Current Erik connector calls finish within the credential service's 60-second lease. Pass the parsed invocation deadline and signal to `withCredential`; lease acquisition then stops at that earlier deadline.
 

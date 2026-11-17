@@ -48,6 +48,18 @@ test('parses bounded browser routes and exact redirect origins in v1 and v2 mani
     assert.deepEqual(parseConnectorManifest(v1), v1);
     const v2 = { version: 2 as const, name: 'Example', resources: [], tools: [], browser };
     assert.deepEqual(parseConnectorManifest(v2), v2);
+    assert.deepEqual(parseConnectorManifest({ ...v2, browser: { ...browser, version: 1 } }),
+        { ...v2, browser: { ...browser, version: 1 } });
+    assert.deepEqual(parseConnectorManifest({ ...v2, browser: { ...browser, version: 2 } }),
+        { ...v2, browser: { ...browser, version: 2 } });
+});
+
+test('refuses unsupported or malformed browser contract versions', () => {
+    for (const version of [0, 3, '2', null, true]) {
+        assert.throws(() => parseConnectorManifest({ ...manifest(), browser: {
+            version, routes: [], redirectOrigins: [],
+        } }), /browser declaration/);
+    }
 });
 
 test('refuses unsafe, ambiguous, unsupported and duplicate browser routes', () => {

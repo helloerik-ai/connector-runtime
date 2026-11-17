@@ -51,10 +51,17 @@ export type ConnectorBrowserRouteManifest = {
     method: ConnectorBrowserMethod;
     trust: Exclude<ConnectorBrowserTrust, 'setup'>;
 };
-export interface ConnectorBrowserManifest {
+interface ConnectorBrowserManifestBase {
     routes: ConnectorBrowserRouteManifest[];
     redirectOrigins: string[];
 }
+export interface ConnectorBrowserManifestV1 extends ConnectorBrowserManifestBase {
+    version?: 1;
+}
+export interface ConnectorBrowserManifestV2 extends ConnectorBrowserManifestBase {
+    version: 2;
+}
+export type ConnectorBrowserManifest = ConnectorBrowserManifestV1 | ConnectorBrowserManifestV2;
 interface ConnectorManifestBase {
     name: string;
     skill?: {

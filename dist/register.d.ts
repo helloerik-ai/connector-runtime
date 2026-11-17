@@ -8,11 +8,11 @@ export interface RegisterConnectorOptions {
 export interface ConnectorRegistrationResult {
     id: string;
     domain: string;
-    browserProxySecret: string;
+    browserProxySecret?: string;
 }
 export declare class ConnectorRegistrationError extends Error {
     readonly status: number;
     constructor(status: number);
 }
-/** Sends the authenticated liveness signal and returns the connector's browser-proxy credential. */
+/** Sends the authenticated liveness signal and returns any legacy v1 browser-proxy credential. */
 export declare function registerConnector(input: RegisterConnectorOptions): Promise<ConnectorRegistrationResult>;

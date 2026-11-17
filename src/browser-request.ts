@@ -1,6 +1,7 @@
 import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import type { ConnectorCallHeaderSource } from './call-headers.js';
 
+/** @deprecated Legacy browser contract v1 transport headers. Browser contract v2 uses ordinary connector requests. */
 export const CONNECTOR_BROWSER_HEADERS = {
     connectorId: 'X-Erik-Browser-Connector',
     requestId: 'X-Erik-Browser-Request-Id',
@@ -9,6 +10,7 @@ export const CONNECTOR_BROWSER_HEADERS = {
     signature: 'X-Erik-Browser-Signature',
 } as const;
 
+/** @deprecated Legacy browser contract v1 only. */
 export interface SignConnectorBrowserRequestOptions {
     secret: string;
     connectorId: string;
@@ -21,12 +23,14 @@ export interface SignConnectorBrowserRequestOptions {
     now?: () => number;
 }
 
+/** @deprecated Legacy browser contract v1 only. */
 export interface SignedConnectorBrowserRequest {
     headers: Record<string, string>;
     requestId: string;
     deadline: Date;
 }
 
+/** @deprecated Legacy browser contract v1 only. */
 export interface VerifyConnectorBrowserRequestOptions {
     headers: ConnectorCallHeaderSource;
     secret: string;
@@ -38,6 +42,7 @@ export interface VerifyConnectorBrowserRequestOptions {
     now?: () => number;
 }
 
+/** @deprecated Legacy browser contract v1 only. */
 export interface ConnectorBrowserRequest {
     connectorId: string;
     requestId: string;
@@ -46,9 +51,11 @@ export interface ConnectorBrowserRequest {
     signal: AbortSignal;
 }
 
+/** @deprecated Legacy browser contract v1 only. */
 export type ConnectorBrowserRequestErrorCode =
     'missing' | 'empty' | 'multiple' | 'wrong-connector' | 'invalid' | 'expired' | 'body-mismatch' | 'bad-signature';
 
+/** @deprecated Legacy browser contract v1 only. */
 export class ConnectorBrowserRequestError extends Error {
     readonly status: number;
 
@@ -118,7 +125,7 @@ function singletonHeader(source: ConnectorCallHeaderSource, name: string): strin
     return values[0]!;
 }
 
-/** Signs the exact request Erik will send to a connector's internal browser namespace. */
+/** @deprecated Legacy browser contract v1 only. Browser contract v2 forwards ordinary connector requests unchanged. */
 export function signConnectorBrowserRequest(input: SignConnectorBrowserRequestOptions): SignedConnectorBrowserRequest {
     const now = (input.now ?? Date.now)();
     const requestId = input.requestId ?? randomUUID();
@@ -146,7 +153,7 @@ export function signConnectorBrowserRequest(input: SignConnectorBrowserRequestOp
     };
 }
 
-/** Verifies one signed browser request and creates the abort signal provider work must observe. */
+/** @deprecated Legacy browser contract v1 only. This signature is not provider-operation authority. */
 export function verifyConnectorBrowserRequest(input: VerifyConnectorBrowserRequestOptions): ConnectorBrowserRequest {
     const connectorId = singletonHeader(input.headers, CONNECTOR_BROWSER_HEADERS.connectorId);
     if (connectorId !== input.connectorId) {

@@ -68,13 +68,18 @@ function registrationResult(value, expectedId, expectedDomain) {
     const allowed = new Set(['id', 'domain', 'lastSeenAt', 'browserProxySecret']);
     if (Object.keys(result).some(key => !allowed.has(key)) || result.id !== expectedId
         || !canonicalDomain(result.domain) || result.domain !== expectedDomain
-        || typeof result.browserProxySecret !== 'string' || result.browserProxySecret.length < 32
-        || result.browserProxySecret.length > 512 || !/^[A-Za-z0-9_-]+$/.test(result.browserProxySecret)) {
+        || (result.browserProxySecret !== undefined && (typeof result.browserProxySecret !== 'string'
+            || result.browserProxySecret.length < 32 || result.browserProxySecret.length > 512
+            || !/^[A-Za-z0-9_-]+$/.test(result.browserProxySecret)))) {
         throw new ConnectorRegistrationError(502);
     }
-    return { id: result.id, domain: result.domain, browserProxySecret: result.browserProxySecret };
+    return {
+        id: result.id,
+        domain: result.domain,
+        ...(typeof result.browserProxySecret === 'string' && { browserProxySecret: result.browserProxySecret }),
+    };
 }
-/** Sends the authenticated liveness signal and returns the connector's browser-proxy credential. */
+/** Sends the authenticated liveness signal and returns any legacy v1 browser-proxy credential. */
 export async function registerConnector(input) {
     if (!exactApiOrigin(input.apiUrl) || !canonicalDomain(input.expectedDomain)) {
         throw new ConnectorRegistrationError(400);

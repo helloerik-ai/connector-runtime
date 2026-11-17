@@ -40,6 +40,16 @@ test('registers without following redirects and binds the result to the configur
     assert(request?.signal instanceof AbortSignal);
 });
 
+test('accepts a strict registration result without the legacy browser proxy secret', async () => {
+    const result = await registerConnector({
+        ...options,
+        fetcher: async () => Response.json({
+            id: 'example', domain: 'example.helloerik.ai', lastSeenAt: '2026-11-16T12:00:00.000Z',
+        }),
+    });
+    assert.deepEqual(result, { id: 'example', domain: 'example.helloerik.ai' });
+});
+
 test('refuses unsafe or noncanonical API origins and expected domains before network activity', async () => {
     const invalidApiUrls = [
         'http://api.example', 'https://api.example/', 'https://api.example/path', 'https://user@api.example',
@@ -74,6 +84,7 @@ test('refuses malformed successful registration responses before accepting a bro
         { id: 'example', domain: 'https://example.helloerik.ai', browserProxySecret: 'browser_proxy_secret_0123456789abcdef' },
         { id: 'example', domain: 'example.helloerik.ai/path', browserProxySecret: 'browser_proxy_secret_0123456789abcdef' },
         { id: 'example', domain: 'example.helloerik.ai', browserProxySecret: 'short' },
+        { id: 'example', domain: 'example.helloerik.ai', browserProxySecret: null },
         { id: 'example', domain: 'example.helloerik.ai', browserProxySecret: 'x'.repeat(513) },
         { id: 'example', domain: 'example.helloerik.ai', browserProxySecret: 'x'.repeat(32), extra: true },
     ];

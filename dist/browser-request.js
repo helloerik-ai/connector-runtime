@@ -1,4 +1,5 @@
 import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
+/** @deprecated Legacy browser contract v1 transport headers. Browser contract v2 uses ordinary connector requests. */
 export const CONNECTOR_BROWSER_HEADERS = {
     connectorId: 'X-Erik-Browser-Connector',
     requestId: 'X-Erik-Browser-Request-Id',
@@ -6,6 +7,7 @@ export const CONNECTOR_BROWSER_HEADERS = {
     bodySha256: 'X-Erik-Browser-Body-SHA256',
     signature: 'X-Erik-Browser-Signature',
 };
+/** @deprecated Legacy browser contract v1 only. */
 export class ConnectorBrowserRequestError extends Error {
     code;
     field;
@@ -79,7 +81,7 @@ function singletonHeader(source, name) {
         throw new ConnectorBrowserRequestError('empty', name);
     return values[0];
 }
-/** Signs the exact request Erik will send to a connector's internal browser namespace. */
+/** @deprecated Legacy browser contract v1 only. Browser contract v2 forwards ordinary connector requests unchanged. */
 export function signConnectorBrowserRequest(input) {
     const now = (input.now ?? Date.now)();
     const requestId = input.requestId ?? randomUUID();
@@ -106,7 +108,7 @@ export function signConnectorBrowserRequest(input) {
         deadline,
     };
 }
-/** Verifies one signed browser request and creates the abort signal provider work must observe. */
+/** @deprecated Legacy browser contract v1 only. This signature is not provider-operation authority. */
 export function verifyConnectorBrowserRequest(input) {
     const connectorId = singletonHeader(input.headers, CONNECTOR_BROWSER_HEADERS.connectorId);
     if (connectorId !== input.connectorId) {

@@ -59,7 +59,8 @@ function parseBrowser(value) {
     if (value === undefined)
         return undefined;
     const browser = record(value);
-    if (!browser || Object.keys(browser).some(key => !['routes', 'redirectOrigins'].includes(key))
+    if (!browser || Object.keys(browser).some(key => !['version', 'routes', 'redirectOrigins'].includes(key))
+        || (browser.version !== undefined && browser.version !== 1 && browser.version !== 2)
         || !Array.isArray(browser.routes) || browser.routes.length > 30
         || !Array.isArray(browser.redirectOrigins) || browser.redirectOrigins.length > 30) {
         throw new ConnectorManifestError('Invalid connector manifest browser declaration');
@@ -90,7 +91,11 @@ function parseBrowser(value) {
         originKeys.add(origin);
         return origin;
     });
-    return { routes, redirectOrigins };
+    return {
+        ...(browser.version !== undefined && { version: browser.version }),
+        routes,
+        redirectOrigins,
+    };
 }
 export function parseConnectorManifest(value) {
     const root = record(value);

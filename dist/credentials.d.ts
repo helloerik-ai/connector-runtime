@@ -18,6 +18,12 @@ export interface CredentialUseOptions {
     deadline?: Date;
     signal?: AbortSignal;
 }
+export interface SetupClaimContext {
+    orgId: string;
+    connectionId: string;
+    setupAttempt: string;
+    expiresAt: string;
+}
 export declare class CredentialClient {
     private readonly connectorId;
     private readonly apiUrl;
@@ -29,6 +35,7 @@ export declare class CredentialClient {
     constructor(apiUrl: string, connectorId: string, options?: CredentialClientOptions);
     private resource;
     private request;
+    claimSetup(orgId: string, connectionId: string, callSecret: string, setupAttempt: string, options?: CredentialUseOptions): Promise<SetupClaimContext>;
     private acquire;
     private leaseHeaders;
     private release;

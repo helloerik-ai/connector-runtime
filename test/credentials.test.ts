@@ -21,6 +21,143 @@ function sequence(responses: Response[], calls: Call[]): typeof fetch {
 const acquired = () => Response.json({ lease: { holder: 'holder', token: 7, expiresAt: '2026-01-01T00:00:00.000Z' } }, { status: 201 });
 const released = () => Response.json({ released: true });
 
+test('claims setup with the existing call secret and returns strict authoritative context', async () => {
+    const calls: Call[] = [];
+    const signal = new AbortController().signal;
+    const expiresAt = '2026-01-01T00:00:00.000Z';
+    const client = new CredentialClient('https://api.example/', 'example', {
+        fetcher: sequence([Response.json({ setup: {
+            orgId: 'org:a', connectionId: 'connection/1', setupAttempt: 'attempt-1', expiresAt,
+        } })], calls),
+        now: () => 0,
+    });
+
+    const claim = await client.claimSetup('org:a', 'connection/1', 'call-secret', 'attempt-1', {
+        deadline: new Date(5_000), signal,
+    });
+
+    assert.deepEqual(claim, { orgId: 'org:a', connectionId: 'connection/1', setupAttempt: 'attempt-1', expiresAt });
+    assert.deepEqual(calls.map(({ method, url }) => [method, url]), [[
+        'POST', 'https://api.example/api/connector/credentials/org%3Aa/connection%2F1/claim',
+    ]]);
+    assert.equal(calls[0]!.headers.get('x-erik-connector'), 'example');
+    assert.equal(calls[0]!.headers.get('x-erik-call-secret'), 'call-secret');
+    assert.equal(calls[0]!.headers.get('authorization'), null);
+    assert.equal(calls[0]!.headers.get('content-type'), 'application/json');
+    assert.deepEqual(JSON.parse(calls[0]!.body!), { setupAttempt: 'attempt-1' });
+});
+
+test('bounds setup claims by default and combines earlier deadlines with caller cancellation', async () => {
+    const originalTimeout = AbortSignal.timeout;
+    const durations: number[] = [];
+    const timeoutControllers: AbortController[] = [];
+    AbortSignal.timeout = milliseconds => {
+        durations.push(milliseconds);
+        const controller = new AbortController();
+        timeoutControllers.push(controller);
+        return controller.signal;
+    };
+    try {
+        const signals: AbortSignal[] = [];
+        const response = () => Response.json({ setup: {
+            orgId: 'org', connectionId: 'connection', setupAttempt: 'attempt', expiresAt: '2026-01-01T00:00:00.000Z',
+        } });
+        const client = new CredentialClient('https://api.example', 'example', {
+            now: () => 1_000,
+            fetcher: async (_input, init) => {
+                assert.ok(init?.signal instanceof AbortSignal);
+                signals.push(init.signal);
+                return response();
+            },
+        });
+
+        await client.claimSetup('org', 'connection', 'secret', 'attempt');
+        assert.equal(signals[0], timeoutControllers[0]!.signal);
+
+        const caller = new AbortController();
+        await client.claimSetup('org', 'connection', 'secret', 'attempt', {
+            deadline: new Date(1_400), signal: caller.signal,
+        });
+        assert.notEqual(signals[1], caller.signal);
+        assert.notEqual(signals[1], timeoutControllers[1]!.signal);
+        caller.abort(new Error('setup cancelled'));
+        assert.equal(signals[1]!.aborted, true);
+        assert.equal((signals[1]!.reason as Error).message, 'setup cancelled');
+
+        assert.deepEqual(durations, [10_000, 400]);
+    } finally {
+        AbortSignal.timeout = originalTimeout;
+    }
+});
+
+test('refuses failed setup claims before caller side effects', async () => {
+    let providerStarted = false;
+    const client = new CredentialClient('https://api.example', 'example', {
+        fetcher: async () => new Response(null, { status: 401 }),
+    });
+
+    await assert.rejects((async () => {
+        await client.claimSetup('org', 'connection', 'expired', 'attempt');
+        providerStarted = true;
+    })(), (error: unknown) => error instanceof CredentialClientError && error.code === 'invalid-call' && error.status === 401);
+    assert.equal(providerStarted, false);
+});
+
+test('refuses malformed setup claim responses', async () => {
+    const valid = { orgId: 'org', connectionId: 'connection', setupAttempt: 'attempt', expiresAt: '2026-01-01T00:00:00.000Z' };
+    const cases: unknown[] = [
+        null,
+        { ...valid, orgId: '' },
+        { ...valid, connectionId: 1 },
+        { ...valid, setupAttempt: 'other' },
+        { ...valid, expiresAt: 'tomorrow' },
+        { ...valid, extra: true },
+    ];
+    for (const value of cases) {
+        const client = new CredentialClient('https://api.example', 'example', {
+            fetcher: async () => Response.json({ setup: value }),
+        });
+        await assert.rejects(client.claimSetup('org', 'connection', 'secret', 'attempt'),
+            (error: unknown) => error instanceof CredentialClientError && error.code === 'malformed-response');
+    }
+    const invalidJson = new CredentialClient('https://api.example', 'example', {
+        fetcher: async () => new Response('not json'),
+    });
+    await assert.rejects(invalidJson.claimSetup('org', 'connection', 'secret', 'attempt'),
+        (error: unknown) => error instanceof CredentialClientError && error.code === 'malformed-response');
+
+    const invalidEnvelope = new CredentialClient('https://api.example', 'example', {
+        fetcher: async () => Response.json({ setup: valid, extra: true }),
+    });
+    await assert.rejects(invalidEnvelope.claimSetup('org', 'connection', 'secret', 'attempt'),
+        (error: unknown) => error instanceof CredentialClientError && error.code === 'malformed-response');
+});
+
+test('setup claim propagates cancellation and refuses an elapsed deadline before network activity', async () => {
+    const controller = new AbortController();
+    controller.abort(new Error('setup cancelled'));
+    let calls = 0;
+    const client = new CredentialClient('https://api.example', 'example', {
+        now: () => 100,
+        fetcher: async (_input, init) => {
+            calls++;
+            init?.signal?.throwIfAborted();
+            throw new Error('Unexpected request');
+        },
+    });
+    await assert.rejects(client.claimSetup('org', 'connection', 'secret', 'attempt', {
+        deadline: new Date(200), signal: controller.signal,
+    }), (error: unknown) => error instanceof CredentialClientError && error.code === 'unavailable'
+        && error.cause instanceof Error && error.cause.message === 'setup cancelled');
+    assert.equal(calls, 1);
+
+    await assert.rejects(client.claimSetup('org', 'connection', 'secret', 'attempt', { deadline: new Date(100) }),
+        (error: unknown) => error instanceof CredentialClientError && error.code === 'invalid-call');
+    await assert.rejects(client.claimSetup('org', 'connection', 'secret', 'attempt', { deadline: new Date('invalid') }),
+        (error: unknown) => error instanceof CredentialClientError && error.code === 'invalid-call');
+    assert.equal(calls, 1);
+});
+
 test('acquires, reads, replaces and releases using one lease and encoded resource address', async () => {
     const calls: Call[] = [];
     const client = new CredentialClient('https://api.example/', 'example', { fetcher: sequence([
