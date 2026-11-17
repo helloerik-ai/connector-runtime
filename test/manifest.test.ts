@@ -35,6 +35,95 @@ test('parses and returns a canonical ConnectorManifest v1', () => {
     assert.deepEqual(parseConnectorManifest(fixed), fixed);
 });
 
+test('parses bounded browser routes and exact redirect origins in v1 and v2 manifests', () => {
+    const browser = {
+        routes: [
+            { path: '/setup', method: 'POST' as const, trust: 'setup' as const },
+            { path: '/oauth/callback', method: 'GET' as const, trust: 'provider' as const },
+            { path: '/continue', method: 'GET' as const, trust: 'browser' as const },
+        ],
+        redirectOrigins: ['https://accounts.example.com', 'http://localhost:3000', 'http://127.0.0.1:3000', 'http://[::1]:3000'],
+    };
+    const v1 = { ...manifest(), browser };
+    assert.deepEqual(parseConnectorManifest(v1), v1);
+    const v2 = { version: 2 as const, name: 'Example', resources: [], tools: [], browser };
+    assert.deepEqual(parseConnectorManifest(v2), v2);
+});
+
+test('refuses unsafe, ambiguous, unsupported and duplicate browser routes', () => {
+    const routes: unknown[] = [
+        { path: 'setup', method: 'POST', trust: 'setup' },
+        { path: '/setup/', method: 'POST', trust: 'setup' },
+        { path: '/setup/*', method: 'POST', trust: 'setup' },
+        { path: '/setup.json', method: 'POST', trust: 'setup' },
+        { path: '/setup/../callback', method: 'POST', trust: 'setup' },
+        { path: '/setup/%2fcallback', method: 'POST', trust: 'setup' },
+        { path: '/setup/%5Ccallback', method: 'POST', trust: 'setup' },
+        { path: '/setup', method: 'PUT', trust: 'setup' },
+        { path: '/setup', method: ['POST'], trust: 'setup' },
+        { path: '/setup', method: 'POST', trust: 'admin' },
+        { path: '/setup', method: 'POST', trust: 'setup', extra: true },
+        { path: `/${'x'.repeat(201)}`, method: 'POST', trust: 'setup' },
+    ];
+    for (const route of routes) {
+        assert.throws(() => parseConnectorManifest({ ...manifest(), browser: { routes: [route], redirectOrigins: [] } }),
+            /browser route/);
+    }
+    const route = { path: '/setup', method: 'POST', trust: 'setup' };
+    assert.throws(() => parseConnectorManifest({ ...manifest(), browser: { routes: [route, route], redirectOrigins: [] } }),
+        /duplicate.*browser route/);
+    assert.throws(() => parseConnectorManifest({ ...manifest(), browser: {
+        routes: new Array(31).fill(route), redirectOrigins: [],
+    } }), /browser declaration/);
+});
+
+test('requires exactly POST for setup trust and permits at most one setup route', () => {
+    const getSetup = { path: '/setup', method: 'GET', trust: 'setup' };
+    assert.throws(() => parseConnectorManifest({ ...manifest(), browser: { routes: [getSetup], redirectOrigins: [] } }),
+        /browser route/);
+    assert.throws(() => parseConnectorManifest({ ...manifest(), browser: {
+        routes: [
+            { path: '/setup', method: 'POST', trust: 'setup' },
+            { path: '/setup-again', method: 'POST', trust: 'setup' },
+        ],
+        redirectOrigins: [],
+    } }), /browser route/);
+    for (const malformed of [
+        { path: '/setup', trust: 'setup' },
+        { path: '/setup', method: 'POST' },
+        { path: '/setup', method: ['POST'], trust: 'setup' },
+    ]) {
+        assert.throws(() => parseConnectorManifest({ ...manifest(), browser: { routes: [malformed], redirectOrigins: [] } }),
+            /browser route/);
+    }
+});
+
+test('refuses non-origin, non-HTTPS remote, duplicate and unbounded browser redirect origins', () => {
+    const invalid = [
+        'http://accounts.example.com',
+        'https://accounts.example.com/path',
+        'https://accounts.example.com/',
+        'https://user@accounts.example.com',
+        'https://*.example.com',
+        'https://accounts.example.com?next=x',
+        'http://0.0.0.0:3000',
+        'http://localhost.example.com:3000',
+        `https://${'x'.repeat(301)}`,
+    ];
+    for (const origin of invalid) {
+        assert.throws(() => parseConnectorManifest({ ...manifest(), browser: { routes: [], redirectOrigins: [origin] } }),
+            /redirect origin/);
+    }
+    assert.throws(() => parseConnectorManifest({ ...manifest(), browser: {
+        routes: [], redirectOrigins: ['https://accounts.example.com', 'https://accounts.example.com'],
+    } }), /duplicate.*redirect origin/);
+    assert.throws(() => parseConnectorManifest({ ...manifest(), browser: {
+        routes: [], redirectOrigins: new Array(31).fill('https://accounts.example.com'),
+    } }), /browser declaration/);
+    assert.throws(() => parseConnectorManifest({ ...manifest(), browser: { routes: [], redirectOrigins: [], extra: true } }),
+        /browser declaration/);
+});
+
 test('accepts and canonicalizes a v1 resource with an unrelated search property', () => {
     for (const validResource of [{ idParameter: 'exampleId' }, { fixedId: 'example' }]) {
         const compatibilityInput = manifest() as unknown as Record<string, unknown>;

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { CredentialClient, CredentialClientError } from '../src/index.js';
+import { CredentialClient, CredentialClientError, type CredentialUseOptions } from '../src/index.js';
 
 interface Call { url: string; method: string; headers: Headers; body?: string }
 
@@ -110,6 +110,58 @@ test('stores only after preparation while holding the acquired lease', async () 
     assert.deepEqual(calls.map(call => call.method), ['POST', 'PUT', 'DELETE']);
     assert.equal(calls[1]!.headers.get('x-erik-credential-lease'), 'holder:7');
     assert.deepEqual(JSON.parse(calls[1]!.body!), { token: 'new' });
+});
+
+test('store forwards deadline and signal options to prepared storage', async () => {
+    const client = new CredentialClient('https://api.example', 'example');
+    const controller = new AbortController();
+    const options = { deadline: new Date(Date.now() + 5_000), signal: controller.signal };
+    let forwarded: CredentialUseOptions | undefined;
+    client.storePrepared = async (...args) => { forwarded = args[5]; };
+
+    await client.store('org', 'connection', 'secret', { token: 'new' }, options);
+
+    assert.equal(forwarded, options);
+});
+
+test('store forwards an already-aborted signal and does not mutate credentials', async () => {
+    const controller = new AbortController();
+    controller.abort(new Error('setup expired'));
+    const methods: string[] = [];
+    const client = new CredentialClient('https://api.example', 'example', {
+        fetcher: async (_input, init) => {
+            methods.push(init?.method ?? 'GET');
+            init?.signal?.throwIfAborted();
+            throw new Error('Unexpected request');
+        },
+    });
+
+    await assert.rejects(client.store('org', 'connection', 'secret', { token: 'new' }, {
+        deadline: new Date(Date.now() + 5_000), signal: controller.signal,
+    }), (error: unknown) => error instanceof CredentialClientError && error.code === 'unavailable'
+        && error.cause instanceof Error && error.cause.message === 'setup expired');
+    assert.deepEqual(methods, ['POST']);
+});
+
+test('store observes cancellation after acquisition and does not mutate credentials', async () => {
+    const controller = new AbortController();
+    const methods: string[] = [];
+    const client = new CredentialClient('https://api.example', 'example', {
+        fetcher: async (_input, init) => {
+            const method = init?.method ?? 'GET';
+            methods.push(method);
+            if (method === 'POST') {
+                queueMicrotask(() => controller.abort(new Error('setup deadline reached')));
+                return acquired();
+            }
+            return released();
+        },
+    });
+
+    await assert.rejects(client.store('org', 'connection', 'secret', { token: 'new' }, {
+        deadline: new Date(Date.now() + 5_000), signal: controller.signal,
+    }), /setup deadline reached/);
+    assert.deepEqual(methods, ['POST', 'DELETE']);
 });
 
 test('does not read or write a credential when preparation fails and releases the lease', async () => {

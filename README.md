@@ -1,6 +1,6 @@
 # `@helloerik-ai/connector-runtime`
 
-Public ESM TypeScript runtime contract for Erik connectors. It provides the authoritative connector manifest v1 and v2 parser, authenticated call-header parsing, connector registration, and the exclusive credential-lease client.
+Public ESM TypeScript runtime contract for Erik connectors. It provides the authoritative connector manifest v1 and v2 parser, authenticated call-header parsing, signed browser-proxy requests, connector registration, and the exclusive credential-lease client.
 
 Requires Node.js 24.15 or newer.
 
@@ -32,6 +32,20 @@ Manifest v2 adds synchronized resource-type declarations. Tools can use `resourc
 
 A manifest v2 search declaration has the exact shape `resource: { search: { queryParameter: string } }`; it is not part of the manifest v1 public type. `queryParameter` names a top-level string property in the tool's JSON schema. The declaration describes local catalogue discovery only: the runtime validates and returns it but does not search a provider or define any transport behavior.
 
+Both manifest versions may declare browser routes:
+
+```ts
+browser: {
+    routes: [
+        { path: '/setup', method: 'POST', trust: 'setup' },
+        { path: '/oauth/callback', method: 'GET', trust: 'provider' },
+    ],
+    redirectOrigins: ['https://accounts.provider.example'],
+}
+```
+
+Each declaration allows one exact `GET` or `POST` path and one trust class. A manifest may have at most one `setup` route and it must use `POST`; malformed setup declarations invalidate the manifest. `setup` requires Erik's authenticated setup handoff, `browser` is a connector-state-bound browser continuation, and `provider` is a provider callback whose connector state remains authoritative. Paths use canonical slash-separated alphanumeric, `_` and `-` segments; wildcards, dot segments, encoded separators and other ambiguous forms are refused. Redirects may target only listed exact HTTPS origins. Exact loopback HTTP origins on `localhost`, `127.0.0.1` or `[::1]` are allowed for local development.
+
 ## Authenticated Calls
 
 Pass Node's request headers, or a web `Headers` object, and the connector id configured by the operator:
@@ -51,14 +65,49 @@ Pass `call.signal` to every provider request. Mutating provider calls should use
 ```ts
 import { registerConnector } from '@helloerik-ai/connector-runtime';
 
-await registerConnector({
+const registration = await registerConnector({
     apiUrl: config.erikApiUrl,
     connectorId: config.connectorId,
+    expectedDomain: new URL(config.publicUrl).host,
     secret: config.registrationSecret,
 });
 ```
 
-Registration is the existing authenticated liveness signal and has a ten-second request timeout.
+Registration is the existing authenticated liveness signal and has a ten-second request timeout. `apiUrl` must be an exact HTTPS origin; exact loopback HTTP origins are allowed for local development. Redirects are never followed. `expectedDomain` is the canonical host, including any port, from the connector's configured public URL. Registration refuses a response whose domain differs from it. The validated result contains `id`, `domain`, and the per-connector `browserProxySecret`. Keep that secret in memory and never send it to a browser or log it.
+
+## Browser Proxy Authentication
+
+Erik signs each request it sends to a connector's internal `/erik/browser/...` namespace. Connectors verify it before invoking route code:
+
+```ts
+import { verifyConnectorBrowserRequest } from '@helloerik-ai/connector-runtime';
+
+const browserRequest = verifyConnectorBrowserRequest({
+    headers: request.headers,
+    secret: registration.browserProxySecret,
+    connectorId: config.connectorId,
+    method: request.method,
+    path: url.pathname,
+    query: url.search.slice(1),
+    body: rawBody,
+});
+```
+
+Pass `browserRequest.signal` to downstream work. The signed deadline is canonical ISO 8601 UTC, must be in the future, and can be no more than 60 seconds ahead.
+
+The headers are `X-Erik-Browser-Connector`, `X-Erik-Browser-Request-Id`, `X-Erik-Browser-Deadline`, `X-Erik-Browser-Body-SHA256`, and `X-Erik-Browser-Signature`. The body digest and HMAC-SHA256 signature are lowercase hex. The HMAC input is these exact UTF-8 fields joined by one newline, with no final newline:
+
+```text
+<connector id>\n
+<uppercase method>\n
+<exact /erik/browser/... path>\n
+<raw query without ?>\n
+<lowercase hex SHA-256 body digest>\n
+<unique request id>\n
+<canonical deadline>
+```
+
+`signConnectorBrowserRequest` generates a unique request id and a 30-second deadline unless supplied by Erik. Verification uses strict singleton header parsing and constant-time signature comparison; it binds changes to the connector, method, path, raw query, body, request id, or deadline. The signature proves authenticity and bounded freshness, but does not consume request ids or provide standalone replay prevention. Connector state and one-use setup or credential capabilities remain responsible for replay resistance.
 
 ## Credentials
 
@@ -89,7 +138,7 @@ const result = await credentials.withCredential(
 );
 ```
 
-`store` uses the same lease protocol for OAuth completion. When provider setup must happen before a credential becomes usable, use `storePrepared(orgId, connectionId, callSecret, credential, prepare, options?)`. It acquires and consumes the tuple-bound setup capability first, holds the exclusive lease while `prepare` runs, and stores the new credential only after `prepare` succeeds. The callback cannot access an existing credential. Pass the invocation deadline and signal in `options`; preparation should use that signal for provider work.
+`store(orgId, connectionId, callSecret, credential, options?)` uses the same lease protocol for OAuth completion. Pass the signed browser request's deadline and signal in `options` so lease acquisition and storage cannot outlive that request. When provider setup must happen before a credential becomes usable, use `storePrepared(orgId, connectionId, callSecret, credential, prepare, options?)`. It acquires and consumes the tuple-bound setup capability first, holds the exclusive lease while `prepare` runs, and stores the new credential only after `prepare` succeeds. The callback cannot access an existing credential. Preparation should use the same signal for provider work.
 
 Lease release is best-effort in a `finally` block and never replaces the provider, preparation, or storage error. `CredentialClientError.code` and `status` allow server code to map failures without comparing user-facing messages.
 

@@ -219,7 +219,13 @@ export class CredentialClient {
         }
     }
 
-    async store(orgId: string, connectionId: string, callSecret: string, credential: Credential): Promise<void> {
-        await this.storePrepared(orgId, connectionId, callSecret, credential, async () => undefined);
+    async store(
+        orgId: string,
+        connectionId: string,
+        callSecret: string,
+        credential: Credential,
+        options: CredentialUseOptions = {},
+    ): Promise<void> {
+        await this.storePrepared(orgId, connectionId, callSecret, credential, async () => undefined, options);
     }
 }

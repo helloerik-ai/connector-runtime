@@ -9,6 +9,9 @@ const LEVELS = new Set(['read', 'prepare', 'change', 'irreversible']);
 const FORBIDDEN_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
 const RESERVED_TOOL_NAMES = new Set(['current_time', 'list_people', 'give_access', 'load_skill', 'propose_skill']);
 const RESOURCE_SEGMENT = /^[A-Za-z0-9_:@-][A-Za-z0-9._:@-]*$/;
+const BROWSER_PATH = /^\/[A-Za-z0-9_-]+(?:\/[A-Za-z0-9_-]+)*$/;
+const BROWSER_METHODS = new Set(['GET', 'POST']);
+const BROWSER_TRUST = new Set(['setup', 'browser', 'provider']);
 const record = (value) => value && !Array.isArray(value) && typeof value === 'object' ? value : undefined;
 function text(value, name, max) {
     if (typeof value !== 'string' || !value.trim() || value.length > max) {
@@ -37,6 +40,58 @@ export function validConnectorResourceId(id) {
     return typeof id === 'string' && id.length >= 1 && id.length <= 300
         && id.split('/').every(segment => RESOURCE_SEGMENT.test(segment) && segment !== '..');
 }
+function validRedirectOrigin(value) {
+    if (typeof value !== 'string' || value.length > 300)
+        return false;
+    try {
+        const url = new URL(value);
+        if (url.origin !== value || url.username || url.password || url.hostname.includes('*'))
+            return false;
+        if (url.protocol === 'https:')
+            return true;
+        return url.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname);
+    }
+    catch {
+        return false;
+    }
+}
+function parseBrowser(value) {
+    if (value === undefined)
+        return undefined;
+    const browser = record(value);
+    if (!browser || Object.keys(browser).some(key => !['routes', 'redirectOrigins'].includes(key))
+        || !Array.isArray(browser.routes) || browser.routes.length > 30
+        || !Array.isArray(browser.redirectOrigins) || browser.redirectOrigins.length > 30) {
+        throw new ConnectorManifestError('Invalid connector manifest browser declaration');
+    }
+    const routeKeys = new Set();
+    let setupRoutes = 0;
+    const routes = browser.routes.map((item, index) => {
+        const route = record(item);
+        if (!route || Object.keys(route).some(key => !['path', 'method', 'trust'].includes(key))) {
+            throw new ConnectorManifestError(`Invalid connector manifest browser route ${index + 1}`);
+        }
+        const path = text(route.path, 'browser route path', 200);
+        const method = route.method;
+        const trust = route.trust;
+        const key = `${method} ${path}`;
+        if (!BROWSER_PATH.test(path) || !BROWSER_METHODS.has(method) || !BROWSER_TRUST.has(trust) || routeKeys.has(key)
+            || (trust === 'setup' && (method !== 'POST' || ++setupRoutes > 1))) {
+            throw new ConnectorManifestError(`Invalid or duplicate connector manifest browser route ${index + 1}`);
+        }
+        routeKeys.add(key);
+        return { path, method, trust };
+    });
+    const originKeys = new Set();
+    const redirectOrigins = browser.redirectOrigins.map((origin, index) => {
+        if (!validRedirectOrigin(origin) || originKeys.has(origin)) {
+            throw new ConnectorManifestError(`Invalid or duplicate connector manifest browser redirect origin ${index + 1}`);
+        }
+        originKeys.add(origin);
+        return origin;
+    });
+    return { routes, redirectOrigins };
+}
 export function parseConnectorManifest(value) {
     const root = record(value);
     if (!root || (root.version !== 1 && root.version !== 2) || !Array.isArray(root.tools) || root.tools.length > 50) {
@@ -44,6 +99,7 @@ export function parseConnectorManifest(value) {
     }
     const version = root.version;
     const name = text(root.name, 'name', 120);
+    const browser = parseBrowser(root.browser);
     const skill = root.skill === undefined ? undefined : record(root.skill);
     if (root.skill !== undefined && !skill)
         throw new ConnectorManifestError('Invalid connector manifest skill');
@@ -181,7 +237,7 @@ export function parseConnectorManifest(value) {
         names.add(parsed.name);
         return parsed;
     });
-    const common = { name, ...(parsedSkill && { skill: parsedSkill }) };
+    const common = { name, ...(parsedSkill && { skill: parsedSkill }), ...(browser && { browser }) };
     if (version === 1) {
         return { version, ...common, tools: tools };
     }

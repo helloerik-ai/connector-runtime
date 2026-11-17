@@ -15,7 +15,12 @@ const v1Tool: ConnectorToolManifestV1 = {
     resource: { idParameter: 'exampleId' },
 };
 
-const v1: ConnectorManifestV1 = { version: 1, name: 'Example', tools: [v1Tool] };
+const v1: ConnectorManifestV1 = {
+    version: 1,
+    name: 'Example',
+    tools: [v1Tool],
+    browser: { routes: [{ path: '/setup', method: 'POST', trust: 'setup' }], redirectOrigins: [] },
+};
 const parsedV1 = parseConnectorManifest(v1);
 // @ts-expect-error Manifest v1 resources cannot declare search.
 parsedV1.tools[0]!.resource.search;

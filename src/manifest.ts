@@ -33,9 +33,22 @@ export interface ConnectorResourceManifest {
     supportsSubtree: boolean;
 }
 
+export type ConnectorBrowserMethod = 'GET' | 'POST';
+export type ConnectorBrowserTrust = 'setup' | 'browser' | 'provider';
+
+export type ConnectorBrowserRouteManifest =
+    | { path: string; method: 'POST'; trust: 'setup' }
+    | { path: string; method: ConnectorBrowserMethod; trust: Exclude<ConnectorBrowserTrust, 'setup'> };
+
+export interface ConnectorBrowserManifest {
+    routes: ConnectorBrowserRouteManifest[];
+    redirectOrigins: string[];
+}
+
 interface ConnectorManifestBase {
     name: string;
     skill?: { name: string; description: string; instructions: string };
+    browser?: ConnectorBrowserManifest;
 }
 
 export interface ConnectorManifestV1 extends ConnectorManifestBase {
@@ -64,6 +77,9 @@ const LEVELS = new Set<Level>(['read', 'prepare', 'change', 'irreversible']);
 const FORBIDDEN_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
 const RESERVED_TOOL_NAMES = new Set(['current_time', 'list_people', 'give_access', 'load_skill', 'propose_skill']);
 const RESOURCE_SEGMENT = /^[A-Za-z0-9_:@-][A-Za-z0-9._:@-]*$/;
+const BROWSER_PATH = /^\/[A-Za-z0-9_-]+(?:\/[A-Za-z0-9_-]+)*$/;
+const BROWSER_METHODS = new Set<ConnectorBrowserMethod>(['GET', 'POST']);
+const BROWSER_TRUST = new Set<ConnectorBrowserTrust>(['setup', 'browser', 'provider']);
 
 const record = (value: unknown): Record<string, unknown> | undefined =>
     value && !Array.isArray(value) && typeof value === 'object' ? value as Record<string, unknown> : undefined;
@@ -94,6 +110,55 @@ export function validConnectorResourceId(id: unknown): id is string {
         && id.split('/').every(segment => RESOURCE_SEGMENT.test(segment) && segment !== '..');
 }
 
+function validRedirectOrigin(value: unknown): value is string {
+    if (typeof value !== 'string' || value.length > 300) return false;
+    try {
+        const url = new URL(value);
+        if (url.origin !== value || url.username || url.password || url.hostname.includes('*')) return false;
+        if (url.protocol === 'https:') return true;
+        return url.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname);
+    } catch {
+        return false;
+    }
+}
+
+function parseBrowser(value: unknown): ConnectorBrowserManifest | undefined {
+    if (value === undefined) return undefined;
+    const browser = record(value);
+    if (!browser || Object.keys(browser).some(key => !['routes', 'redirectOrigins'].includes(key))
+        || !Array.isArray(browser.routes) || browser.routes.length > 30
+        || !Array.isArray(browser.redirectOrigins) || browser.redirectOrigins.length > 30) {
+        throw new ConnectorManifestError('Invalid connector manifest browser declaration');
+    }
+    const routeKeys = new Set<string>();
+    let setupRoutes = 0;
+    const routes = browser.routes.map((item, index): ConnectorBrowserRouteManifest => {
+        const route = record(item);
+        if (!route || Object.keys(route).some(key => !['path', 'method', 'trust'].includes(key))) {
+            throw new ConnectorManifestError(`Invalid connector manifest browser route ${index + 1}`);
+        }
+        const path = text(route.path, 'browser route path', 200);
+        const method = route.method as ConnectorBrowserMethod;
+        const trust = route.trust as ConnectorBrowserTrust;
+        const key = `${method} ${path}`;
+        if (!BROWSER_PATH.test(path) || !BROWSER_METHODS.has(method) || !BROWSER_TRUST.has(trust) || routeKeys.has(key)
+            || (trust === 'setup' && (method !== 'POST' || ++setupRoutes > 1))) {
+            throw new ConnectorManifestError(`Invalid or duplicate connector manifest browser route ${index + 1}`);
+        }
+        routeKeys.add(key);
+        return { path, method, trust } as ConnectorBrowserRouteManifest;
+    });
+    const originKeys = new Set<string>();
+    const redirectOrigins = browser.redirectOrigins.map((origin, index) => {
+        if (!validRedirectOrigin(origin) || originKeys.has(origin)) {
+            throw new ConnectorManifestError(`Invalid or duplicate connector manifest browser redirect origin ${index + 1}`);
+        }
+        originKeys.add(origin);
+        return origin;
+    });
+    return { routes, redirectOrigins };
+}
+
 export function parseConnectorManifest(value: ConnectorManifestV1): ConnectorManifestV1;
 export function parseConnectorManifest(value: ConnectorManifestV2): ConnectorManifestV2;
 export function parseConnectorManifest(value: unknown): ConnectorManifest;
@@ -104,6 +169,7 @@ export function parseConnectorManifest(value: unknown): ConnectorManifest {
     }
     const version = root.version;
     const name = text(root.name, 'name', 120);
+    const browser = parseBrowser(root.browser);
     const skill = root.skill === undefined ? undefined : record(root.skill);
     if (root.skill !== undefined && !skill) throw new ConnectorManifestError('Invalid connector manifest skill');
     const parsedSkill = skill ? {
@@ -234,7 +300,7 @@ export function parseConnectorManifest(value: unknown): ConnectorManifest {
         names.add(parsed.name);
         return parsed;
     });
-    const common = { name, ...(parsedSkill && { skill: parsedSkill }) };
+    const common = { name, ...(parsedSkill && { skill: parsedSkill }), ...(browser && { browser }) };
     if (version === 1) {
         return { version, ...common, tools: tools as ConnectorToolManifestV1[] };
     }

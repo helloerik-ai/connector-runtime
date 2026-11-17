@@ -3,6 +3,10 @@ export {
     parseConnectorManifest,
     validConnectorResourceId,
     type ConnectorActionLevel,
+    type ConnectorBrowserManifest,
+    type ConnectorBrowserMethod,
+    type ConnectorBrowserRouteManifest,
+    type ConnectorBrowserTrust,
     type ConnectorManifest,
     type ConnectorManifestV1,
     type ConnectorManifestV2,
@@ -13,6 +17,17 @@ export {
     type Level,
 } from './manifest.js';
 export {
+    CONNECTOR_BROWSER_HEADERS,
+    ConnectorBrowserRequestError,
+    signConnectorBrowserRequest,
+    verifyConnectorBrowserRequest,
+    type ConnectorBrowserRequest,
+    type ConnectorBrowserRequestErrorCode,
+    type SignConnectorBrowserRequestOptions,
+    type SignedConnectorBrowserRequest,
+    type VerifyConnectorBrowserRequestOptions,
+} from './browser-request.js';
+export {
     ConnectorCallHeaderError,
     parseConnectorCallHeaders,
     type ConnectorCallHeaderErrorCode,
@@ -22,6 +37,7 @@ export {
 export {
     ConnectorRegistrationError,
     registerConnector,
+    type ConnectorRegistrationResult,
     type RegisterConnectorOptions,
 } from './register.js';
 export {

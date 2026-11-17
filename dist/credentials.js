@@ -165,7 +165,7 @@ export class CredentialClient {
             await this.release(resource, headers, { ...(options.deadline && { deadline: options.deadline }) });
         }
     }
-    async store(orgId, connectionId, callSecret, credential) {
-        await this.storePrepared(orgId, connectionId, callSecret, credential, async () => undefined);
+    async store(orgId, connectionId, callSecret, credential, options = {}) {
+        await this.storePrepared(orgId, connectionId, callSecret, credential, async () => undefined, options);
     }
 }

@@ -40,6 +40,21 @@ export interface ConnectorResourceManifest {
     maxAgeSeconds: number;
     supportsSubtree: boolean;
 }
+export type ConnectorBrowserMethod = 'GET' | 'POST';
+export type ConnectorBrowserTrust = 'setup' | 'browser' | 'provider';
+export type ConnectorBrowserRouteManifest = {
+    path: string;
+    method: 'POST';
+    trust: 'setup';
+} | {
+    path: string;
+    method: ConnectorBrowserMethod;
+    trust: Exclude<ConnectorBrowserTrust, 'setup'>;
+};
+export interface ConnectorBrowserManifest {
+    routes: ConnectorBrowserRouteManifest[];
+    redirectOrigins: string[];
+}
 interface ConnectorManifestBase {
     name: string;
     skill?: {
@@ -47,6 +62,7 @@ interface ConnectorManifestBase {
         description: string;
         instructions: string;
     };
+    browser?: ConnectorBrowserManifest;
 }
 export interface ConnectorManifestV1 extends ConnectorManifestBase {
     version: 1;
