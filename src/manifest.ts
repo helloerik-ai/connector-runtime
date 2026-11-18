@@ -142,6 +142,14 @@ export function connectorBrowserRouteUrl(apiOrigin: string, connectorId: string,
     return `${apiOrigin}/connectors/${connectorId}/browser${routePath}`;
 }
 
+/** Builds the public Erik endpoint that redeems an unsuccessful browser setup return. */
+export function connectorBrowserReturnUrl(apiOrigin: string, connectorId: string): string {
+    if (!validRedirectOrigin(apiOrigin) || typeof connectorId !== 'string' || !CONNECTOR_ID.test(connectorId)) {
+        throw new TypeError('Invalid connector browser return URL input');
+    }
+    return `${apiOrigin}/connectors/${connectorId}/browser-return`;
+}
+
 function parseBrowser(value: unknown): ConnectorBrowserManifest | undefined {
     if (value === undefined) return undefined;
     const browser = record(value);

@@ -1,5 +1,6 @@
 export {
     ConnectorManifestError,
+    connectorBrowserReturnUrl,
     connectorBrowserRouteUrl,
     parseConnectorManifest,
     validConnectorResourceId,

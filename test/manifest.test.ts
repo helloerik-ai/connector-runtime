@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
+    connectorBrowserReturnUrl,
     connectorBrowserRouteUrl,
     ConnectorManifestError,
     parseConnectorManifest,
@@ -8,6 +9,19 @@ import {
     type ConnectorManifestV1,
     type ConnectorManifestV2,
 } from '../src/index.js';
+
+test('builds exact public browser return URLs from validated origins and connector ids', () => {
+    assert.equal(connectorBrowserReturnUrl('https://api.helloerik.ai', 'fortnox'),
+        'https://api.helloerik.ai/connectors/fortnox/browser-return');
+    assert.equal(connectorBrowserReturnUrl('http://localhost:3180', 'connector-example'),
+        'http://localhost:3180/connectors/connector-example/browser-return');
+    for (const origin of ['http://api.helloerik.ai', 'https://api.helloerik.ai/', 'not-an-origin']) {
+        assert.throws(() => connectorBrowserReturnUrl(origin, 'fortnox'), TypeError);
+    }
+    for (const connectorId of ['a', 'Fortnox', 'fortnox_setup', '-fortnox']) {
+        assert.throws(() => connectorBrowserReturnUrl('https://api.helloerik.ai', connectorId), TypeError);
+    }
+});
 
 test('builds exact public browser-contract v2 route URLs for production, dev, and loopback', () => {
     assert.equal(connectorBrowserRouteUrl('https://api.helloerik.ai', 'slack', '/oauth/callback'),

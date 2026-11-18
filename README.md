@@ -219,7 +219,9 @@ try {
 
 `randomSetupToken`, `setupCookieName`, `setupCookieHeader`, `parseSetupCookie`, `setupBrowserNonceMatches`, and `clearSetupCookieHeader` provide browser binding without fixed or revealing cookie names. Cookies are host-only, `HttpOnly`, `SameSite=Lax`, path- and age-bounded, and `Secure`; exact loopback HTTP origins are the only exception. Cookie parsing rejects malformed and duplicate cookies rather than choosing one.
 
-Finish successful browser responses with `setupCompletionHeaders(returnToken)`. It returns only `X-Erik-Browser-Return` and `Cache-Control: no-store`; connectors must not construct an Erik return URL.
+Finish successful browser responses with `setupCompletionHeaders(returnToken)`. It returns only `X-Erik-Browser-Return` and `Cache-Control: no-store`; connectors must not construct a frontend return URL.
+
+When provider authorization is refused, build the fixed Erik endpoint with `connectorBrowserReturnUrl(apiOrigin, connectorId)` and render a `method="post"` form containing only the opaque `returnToken` field. Keep the action out of request-derived headers and permit that exact action in the page's `form-action` policy. Erik atomically redeems the same connector-bound, one-use token used by successful completion and redirects to the stored validated frontend destination without adding success parameters. Never put the token or frontend destination in a URL.
 
 These APIs do not define provider authorization URLs, PKCE, callback parameters, token exchange, account selection, installation registration, credential shape, route layout, or response pages. Those remain connector-owned. In every multi-step callback, claim local state and then the central continuation before provider exchange. Finish by letting `store` or `storePrepared` consume the continuation secret. For a one-step callback, `storePrepared` may consume the initial claimed secret directly before provider exchange.
 
