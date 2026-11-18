@@ -1,12 +1,48 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
+    connectorBrowserRouteUrl,
     ConnectorManifestError,
     parseConnectorManifest,
     validConnectorResourceId,
     type ConnectorManifestV1,
     type ConnectorManifestV2,
 } from '../src/index.js';
+
+test('builds exact public browser-contract v2 route URLs for production, dev, and loopback', () => {
+    assert.equal(connectorBrowserRouteUrl('https://api.helloerik.ai', 'slack', '/oauth/callback'),
+        'https://api.helloerik.ai/connectors/slack/browser/oauth/callback');
+    assert.equal(connectorBrowserRouteUrl('https://api-dev.helloerik.ai', 'google-drive', '/oauth/callback'),
+        'https://api-dev.helloerik.ai/connectors/google-drive/browser/oauth/callback');
+    assert.equal(connectorBrowserRouteUrl('http://localhost:3180', 'connector-example', '/setup/complete'),
+        'http://localhost:3180/connectors/connector-example/browser/setup/complete');
+    assert.equal(connectorBrowserRouteUrl('http://[::1]:3180', 'ssh', '/connect/complete'),
+        'http://[::1]:3180/connectors/ssh/browser/connect/complete');
+    const maximumId = `a${'b'.repeat(49)}`;
+    assert.equal(connectorBrowserRouteUrl('https://api.helloerik.ai', maximumId, '/setup'),
+        `https://api.helloerik.ai/connectors/${maximumId}/browser/setup`);
+});
+
+test('refuses noncanonical origins, connector ids, and ordinary route paths', () => {
+    for (const origin of [
+        'http://api.helloerik.ai',
+        'https://api.helloerik.ai/',
+        'https://api.helloerik.ai/path',
+        'https://api.helloerik.ai?query=1',
+        'https://api.helloerik.ai#fragment',
+        'https://user:pass@api.helloerik.ai',
+        'https://*.helloerik.ai',
+        'https://API.HELLOERIK.AI',
+        'not-an-origin',
+    ]) assert.throws(() => connectorBrowserRouteUrl(origin, 'slack', '/oauth/callback'), TypeError);
+    for (const connectorId of ['a', 'Slack', 'google_drive', 'google/drive', '-slack', `a${'b'.repeat(50)}`]) {
+        assert.throws(() => connectorBrowserRouteUrl('https://api.helloerik.ai', connectorId, '/oauth/callback'), TypeError);
+    }
+    for (const routePath of [
+        '', '/', '/oauth/callback/', '//oauth/callback', '/oauth/../callback', '/oauth%2Fcallback',
+        '/oauth/callback?code=value', '/oauth/callback#fragment', `/${'a'.repeat(200)}`,
+    ]) assert.throws(() => connectorBrowserRouteUrl('https://api.helloerik.ai', 'slack', routePath), TypeError);
+});
 
 const manifest = (): ConnectorManifestV1 => ({
     version: 1,

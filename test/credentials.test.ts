@@ -47,6 +47,122 @@ test('claims setup with the existing call secret and returns strict authoritativ
     assert.deepEqual(JSON.parse(calls[0]!.body!), { setupAttempt: 'attempt-1' });
 });
 
+test('claims callback continuation with the exact initial claim secret and returns its replacement', async () => {
+    const calls: Call[] = [];
+    const expiresAt = '2026-01-01T00:00:00.000Z';
+    const client = new CredentialClient('https://api.example/', 'google-drive', {
+        fetcher: async (input, init) => {
+            calls.push({ url: String(input), method: init?.method ?? 'GET', headers: new Headers(init?.headers), body: String(init?.body) });
+            const body = JSON.parse(String(init?.body)) as { continuationSecret: string };
+            return Response.json({ continuation: {
+                continuationSecret: body.continuationSecret,
+                orgId: 'org:a', connectionId: 'connection/1', setupAttempt: 'attempt-1', expiresAt,
+            } });
+        },
+        now: () => 0,
+    });
+
+    const continuation = await client.claimSetupContinuation(
+        'org:a', 'connection/1', 'claimed-secret', 'attempt-1', { deadline: new Date(5_000) });
+
+    assert.match(continuation.continuationSecret, /^[A-Za-z0-9_-]{43}$/);
+    assert.deepEqual({ ...continuation, continuationSecret: '(secret)' }, {
+        continuationSecret: '(secret)', orgId: 'org:a', connectionId: 'connection/1', setupAttempt: 'attempt-1', expiresAt,
+    });
+    assert.deepEqual(calls.map(({ method, url }) => [method, url]), [[
+        'POST', 'https://api.example/api/connector/credentials/org%3Aa/connection%2F1/continuation',
+    ]]);
+    assert.equal(calls[0]!.headers.get('x-erik-connector'), 'google-drive');
+    assert.equal(calls[0]!.headers.get('x-erik-call-secret'), 'claimed-secret');
+    assert.deepEqual(JSON.parse(calls[0]!.body!), {
+        setupAttempt: 'attempt-1', continuationSecret: continuation.continuationSecret,
+    });
+});
+
+test('retries a lost continuation response with the same connector-generated secret', async () => {
+    let time = 0;
+    const bodies: Record<string, unknown>[] = [];
+    const client = new CredentialClient('https://api.example', 'example', {
+        now: () => time,
+        sleep: async milliseconds => { time += milliseconds; },
+        fetcher: async (_input, init) => {
+            const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+            bodies.push(body);
+            if (bodies.length === 1) throw new Error('response lost after transition');
+            return Response.json({ continuation: {
+                continuationSecret: body.continuationSecret,
+                orgId: 'org', connectionId: 'connection', setupAttempt: 'attempt', expiresAt: '2026-01-01T00:00:00.000Z',
+            } });
+        },
+    });
+
+    const result = await client.claimSetupContinuation('org', 'connection', 'claimed-secret', 'attempt');
+
+    assert.equal(bodies.length, 2);
+    assert.deepEqual(bodies[1], bodies[0]);
+    assert.equal(result.continuationSecret, bodies[0]!.continuationSecret);
+    assert.equal(time, 200);
+});
+
+test('bounds temporary continuation retries by the caller deadline without changing the proposal', async () => {
+    let time = 0;
+    const bodies: string[] = [];
+    const client = new CredentialClient('https://api.example', 'example', {
+        now: () => time,
+        sleep: async milliseconds => { time += milliseconds; },
+        fetcher: async (_input, init) => {
+            bodies.push(String(init?.body));
+            return Response.json({ error: 'temporary' }, { status: 503 });
+        },
+    });
+
+    await assert.rejects(client.claimSetupContinuation('org', 'connection', 'claimed-secret', 'attempt', {
+        deadline: new Date(400),
+    }), (error: unknown) => error instanceof CredentialClientError && error.code === 'unavailable');
+    assert.deepEqual(bodies, [bodies[0]!, bodies[0]!]);
+    assert.equal(time, 400);
+});
+
+test('strictly refuses invalid callback continuation responses and tuple substitution', async () => {
+    const valid = {
+        continuationSecret: 'continuation_012345678901234567890123', orgId: 'org', connectionId: 'connection',
+        setupAttempt: 'attempt', expiresAt: '2026-01-01T00:00:00.000Z',
+    };
+    for (const value of [
+        null,
+        { ...valid, continuationSecret: 'short' },
+        { ...valid, continuationSecret: `${valid.continuationSecret}.invalid` },
+        { ...valid, orgId: 'other' },
+        { ...valid, connectionId: 'other' },
+        { ...valid, setupAttempt: 'other' },
+        { ...valid, expiresAt: 'invalid' },
+        { ...valid, extra: true },
+    ]) {
+        const client = new CredentialClient('https://api.example', 'example', {
+            fetcher: async (_input, init) => {
+                const proposed = (JSON.parse(String(init?.body)) as { continuationSecret: string }).continuationSecret;
+                return Response.json({ continuation: value && typeof value === 'object'
+                    ? { ...(value as Record<string, unknown>),
+                        ...((value as Record<string, unknown>).continuationSecret === valid.continuationSecret
+                            && { continuationSecret: proposed }) }
+                    : value });
+            },
+        });
+        await assert.rejects(client.claimSetupContinuation('org', 'connection', 'claimed-secret', 'attempt'),
+            (error: unknown) => error instanceof CredentialClientError && error.code === 'malformed-response');
+    }
+    const invalidEnvelope = new CredentialClient('https://api.example', 'example', {
+        fetcher: async () => Response.json({ continuation: valid, extra: true }),
+    });
+    await assert.rejects(invalidEnvelope.claimSetupContinuation('org', 'connection', 'claimed-secret', 'attempt'),
+        (error: unknown) => error instanceof CredentialClientError && error.code === 'malformed-response');
+    const invalidCall = new CredentialClient('https://api.example', 'example', {
+        fetcher: async () => new Response(null, { status: 401 }),
+    });
+    await assert.rejects(invalidCall.claimSetupContinuation('org', 'connection', 'replayed', 'attempt'),
+        (error: unknown) => error instanceof CredentialClientError && error.code === 'invalid-call' && error.status === 401);
+});
+
 test('bounds setup claims by default and combines earlier deadlines with caller cancellation', async () => {
     const originalTimeout = AbortSignal.timeout;
     const durations: number[] = [];

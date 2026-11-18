@@ -1,3 +1,5 @@
+import { randomBytes } from 'node:crypto';
+
 export type Credential = Record<string, unknown>;
 
 interface CredentialLease {
@@ -48,6 +50,10 @@ export interface SetupClaimContext {
     expiresAt: string;
 }
 
+export interface SetupContinuationContext extends SetupClaimContext {
+    continuationSecret: string;
+}
+
 const object = (value: unknown): Record<string, unknown> | undefined =>
     value && !Array.isArray(value) && typeof value === 'object' ? value as Record<string, unknown> : undefined;
 
@@ -87,6 +93,16 @@ function parseSetupClaim(value: unknown, status: number): SetupClaimContext {
         throw new CredentialClientError('malformed-response', 'Erik credential service returned an invalid setup claim', status);
     }
     return found as unknown as SetupClaimContext;
+}
+
+function parseSetupContinuation(value: unknown, status: number): SetupContinuationContext {
+    const found = object(value);
+    if (!found || typeof found.continuationSecret !== 'string' || found.continuationSecret.length < 20
+        || found.continuationSecret.length > 500 || !/^[A-Za-z0-9_-]+$/.test(found.continuationSecret)) {
+        throw new CredentialClientError('malformed-response', 'Erik credential service returned an invalid setup continuation', status);
+    }
+    const { continuationSecret, ...claim } = found;
+    return { ...parseSetupClaim(claim, status), continuationSecret };
 }
 
 export class CredentialClient {
@@ -162,6 +178,69 @@ export class CredentialClient {
             throw new CredentialClientError('malformed-response', 'Erik credential service returned an invalid setup claim', response.status);
         }
         return claim;
+    }
+
+    async claimSetupContinuation(
+        orgId: string,
+        connectionId: string,
+        claimedSetupSecret: string,
+        setupAttempt: string,
+        options: CredentialUseOptions = {},
+    ): Promise<SetupContinuationContext> {
+        const deadline = Math.min(this.now() + 10_000, options.deadline?.getTime() ?? Number.POSITIVE_INFINITY);
+        if (!Number.isFinite(deadline) || deadline <= this.now()) {
+            throw new CredentialClientError('invalid-call', 'Connector call is invalid or expired', 401);
+        }
+        const continuationSecret = randomBytes(32).toString('base64url');
+        while (true) {
+            if (options.signal?.aborted) {
+                throw new CredentialClientError('unavailable', 'Setup continuation is unavailable', undefined,
+                    { cause: options.signal.reason });
+            }
+            const remaining = deadline - this.now();
+            if (remaining <= 0) throw new CredentialClientError('unavailable', 'Setup continuation is unavailable');
+            const timeout = AbortSignal.timeout(remaining);
+            const signal = options.signal ? AbortSignal.any([options.signal, timeout]) : timeout;
+            let response: Response;
+            try {
+                response = await this.request(this.resource(orgId, connectionId) + '/continuation', {
+                    method: 'POST',
+                    headers: {
+                        'X-Erik-Connector': this.connectorId,
+                        'X-Erik-Call-Secret': claimedSetupSecret,
+                        'Content-Type': 'application/json',
+                        Accept: 'application/json',
+                    },
+                    signal,
+                    body: JSON.stringify({ setupAttempt, continuationSecret }),
+                }, 'unavailable', 'Setup continuation is unavailable');
+            } catch (error) {
+                if (!(error instanceof CredentialClientError) || error.code !== 'unavailable'
+                    || options.signal?.aborted || this.now() >= deadline) throw error;
+                await this.sleep(Math.min(200, Math.max(0, deadline - this.now())));
+                continue;
+            }
+            if (response.status === 401) {
+                throw new CredentialClientError('invalid-call', 'Connector call is invalid or expired', 401);
+            }
+            if (!response.ok) {
+                if (response.status < 500 || this.now() >= deadline) {
+                    throw new CredentialClientError('unavailable', 'Setup continuation is unavailable', response.status);
+                }
+                await this.sleep(Math.min(200, Math.max(0, deadline - this.now())));
+                continue;
+            }
+            const payload = await json(response);
+            if (Object.keys(payload).length !== 1 || !Object.hasOwn(payload, 'continuation')) {
+                throw new CredentialClientError('malformed-response', 'Erik credential service returned an invalid setup continuation', response.status);
+            }
+            const continuation = parseSetupContinuation(payload.continuation, response.status);
+            if (continuation.orgId !== orgId || continuation.connectionId !== connectionId
+                || continuation.setupAttempt !== setupAttempt || continuation.continuationSecret !== continuationSecret) {
+                throw new CredentialClientError('malformed-response', 'Erik credential service returned an invalid setup continuation', response.status);
+            }
+            return continuation;
+        }
     }
 
     private async acquire(orgId: string, connectionId: string, callSecret: string, options: CredentialUseOptions = {}): Promise<CredentialLease> {

@@ -5,6 +5,7 @@ const TOOL_NAME = /^[a-z][a-z0-9_]{1,63}$/;
 const ACTION_NAME = /^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$/;
 const RESOURCE_TYPE = /^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$/;
 const SKILL_NAME = /^[a-z][a-z0-9-]{1,63}$/;
+const CONNECTOR_ID = /^[a-z][a-z0-9-]{1,49}$/;
 const LEVELS = new Set(['read', 'prepare', 'change', 'irreversible']);
 const FORBIDDEN_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
 const RESERVED_TOOL_NAMES = new Set(['current_time', 'list_people', 'give_access', 'load_skill', 'propose_skill']);
@@ -54,6 +55,14 @@ function validRedirectOrigin(value) {
     catch {
         return false;
     }
+}
+/** Builds the public Erik browser-contract v2 URL for one exact ordinary connector route. */
+export function connectorBrowserRouteUrl(apiOrigin, connectorId, routePath) {
+    if (!validRedirectOrigin(apiOrigin) || typeof connectorId !== 'string' || !CONNECTOR_ID.test(connectorId)
+        || typeof routePath !== 'string' || routePath.length > 200 || !BROWSER_PATH.test(routePath)) {
+        throw new TypeError('Invalid connector browser route URL input');
+    }
+    return `${apiOrigin}/connectors/${connectorId}/browser${routePath}`;
 }
 function parseBrowser(value) {
     if (value === undefined)

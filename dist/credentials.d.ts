@@ -24,6 +24,9 @@ export interface SetupClaimContext {
     setupAttempt: string;
     expiresAt: string;
 }
+export interface SetupContinuationContext extends SetupClaimContext {
+    continuationSecret: string;
+}
 export declare class CredentialClient {
     private readonly connectorId;
     private readonly apiUrl;
@@ -36,6 +39,7 @@ export declare class CredentialClient {
     private resource;
     private request;
     claimSetup(orgId: string, connectionId: string, callSecret: string, setupAttempt: string, options?: CredentialUseOptions): Promise<SetupClaimContext>;
+    claimSetupContinuation(orgId: string, connectionId: string, claimedSetupSecret: string, setupAttempt: string, options?: CredentialUseOptions): Promise<SetupContinuationContext>;
     private acquire;
     private leaseHeaders;
     private release;

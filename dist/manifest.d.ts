@@ -87,6 +87,8 @@ export declare class ConnectorManifestError extends Error {
 }
 /** Matches the canonical resource-id rule enforced by Erik's permission gateway. */
 export declare function validConnectorResourceId(id: unknown): id is string;
+/** Builds the public Erik browser-contract v2 URL for one exact ordinary connector route. */
+export declare function connectorBrowserRouteUrl(apiOrigin: string, connectorId: string, routePath: string): string;
 export declare function parseConnectorManifest(value: ConnectorManifestV1): ConnectorManifestV1;
 export declare function parseConnectorManifest(value: ConnectorManifestV2): ConnectorManifestV2;
 export declare function parseConnectorManifest(value: unknown): ConnectorManifest;
